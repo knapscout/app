@@ -17,22 +17,27 @@
 
     #status {
       background: #111827; color: #f3f4f6;
-      padding: 10px 14px; font-size: 13px;
+      padding: 4px 10px; font-size: 12px;
+      padding-top: calc(4px + env(safe-area-inset-top));
       display: flex; justify-content: space-between; align-items: center;
-      gap: 10px; flex-shrink: 0;
+      gap: 8px; flex-shrink: 0; min-height: 32px;
     }
-    #status .left { display: flex; gap: 10px; align-items: center; min-width: 0; }
-    #status .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+    #status .left { display: flex; gap: 8px; align-items: center; min-width: 0; flex: 1; }
+    #status .right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    #status .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
     #status.ok .dot { background: #10b981; }
     #status.err .dot { background: #ef4444; }
-    #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #counts { color: #9ca3af; font-size: 12px; }
-    #export-btn {
-      background: #3b82f6; color: white; border: none;
-      padding: 8px 14px; border-radius: 6px;
-      font-size: 13px; font-weight: 600; flex-shrink: 0;
+    #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+    #counts { color: #9ca3af; font-size: 11px; white-space: nowrap; }
+    #status button {
+      color: white; border: none;
+      padding: 5px 10px; border-radius: 5px;
+      font-size: 12px; font-weight: 600; flex-shrink: 0;
     }
+    #export-btn { background: #3b82f6; }
     #export-btn:active { background: #2563eb; }
+    #clear-btn { background: #6b7280; }
+    #clear-btn:active { background: #4b5563; }
 
     #map { flex: 1; background: #e5e7eb; }
 
@@ -55,8 +60,8 @@
     .btn-find     { background: #22c55e; }
 
     .pin {
-      width: 22px; height: 22px; border-radius: 50%;
-      border: 3px solid white; box-shadow: 0 0 0 2px rgba(0,0,0,0.35);
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 4px solid white; box-shadow: 0 0 0 3px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35);
     }
     .pin.none     { background: #9ca3af; }
     .pin.evidence { background: #fbbf24; }
@@ -92,9 +97,12 @@
       <div class="left">
         <span class="dot"></span>
         <span id="status-text">Requesting GPS…</span>
+        <span id="counts"></span>
       </div>
-      <span id="counts"></span>
-      <button id="export-btn">Export</button>
+      <div class="right">
+        <button id="clear-btn">Clear</button>
+        <button id="export-btn">Export</button>
+      </div>
     </div>
     <div id="map"></div>
     <div id="buttons">
@@ -158,7 +166,7 @@
       return L.divIcon({
         className: '',
         html: `<div class="pin ${type}"></div>`,
-        iconSize: [22, 22], iconAnchor: [11, 11]
+        iconSize: [32, 32], iconAnchor: [16, 16]
       });
     }
 
@@ -276,6 +284,23 @@
         save();
         addPinToMap(pin);
       });
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      const n = state.pins.length, t = state.track.length;
+      if (!confirm(`Clear survey? This will delete ${n} pin(s) and ${t} track point(s). This cannot be undone.`)) return;
+      state = {
+        version: 1,
+        started: new Date().toISOString(),
+        pins: [],
+        track: []
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && layer !== userMarker) map.removeLayer(layer);
+      });
+      trackLine.setLatLngs([]);
+      updateCounts();
     });
 
     document.getElementById('export-btn').addEventListener('click', () => {
