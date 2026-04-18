@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>KnapScout — Field Survey</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="">
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
+                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                 user-select: none; -webkit-user-select: none; }
+    #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+    #status {
+      background: #111827; color: #f3f4f6;
+      padding: 10px 14px; font-size: 13px;
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; flex-shrink: 0;
+    }
+    #status .left { display: flex; gap: 10px; align-items: center; min-width: 0; }
+    #status .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+    #status.ok .dot { background: #10b981; }
+    #status.err .dot { background: #ef4444; }
+    #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #counts { color: #9ca3af; font-size: 12px; }
+    #export-btn {
+      background: #3b82f6; color: white; border: none;
+      padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; font-weight: 600; flex-shrink: 0;
+    }
+    #export-btn:active { background: #2563eb; }
+
+    #map { flex: 1; background: #e5e7eb; }
+
+    #buttons {
+      display: flex; gap: 8px; padding: 12px;
+      background: #111827; flex-shrink: 0;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    }
+    #buttons button {
+      flex: 1; min-height: 68px; padding: 8px;
+      font-size: 16px; font-weight: 700;
+      border: none; border-radius: 12px; color: #111827;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      cursor: pointer;
+    }
+    #buttons button:active { transform: scale(0.96); filter: brightness(0.92); }
+    .btn-none     { background: #9ca3af; }
+    .btn-evidence { background: #fbbf24; }
+    .btn-find     { background: #22c55e; }
+
+    .pin {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 3px solid white; box-shadow: 0 0 0 2px rgba(0,0,0,0.35);
+    }
+    .pin.none     { background: #9ca3af; }
+    .pin.evidence { background: #fbbf24; }
+    .pin.find     { background: #22c55e; }
+
+    .user-pin {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: #3b82f6; border: 3px solid white;
+      box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+    }
+
+    .leaflet-popup-content { margin: 12px 14px; font-size: 14px; min-width: 220px; }
+    .leaflet-popup-content .meta {
+      color: #6b7280; font-size: 12px; margin-bottom: 8px; line-height: 1.4;
+    }
+    .leaflet-popup-content .meta b { color: #111827; font-size: 13px; }
+    .leaflet-popup-content textarea {
+      width: 100%; height: 72px; font-size: 15px;
+      padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;
+      resize: vertical; font-family: inherit;
+    }
+    .leaflet-popup-content .save-note {
+      margin-top: 8px; width: 100%; padding: 10px;
+      background: #3b82f6; color: white; border: none;
+      border-radius: 6px; font-size: 15px; font-weight: 600;
+    }
+    .leaflet-popup-content .save-note:active { background: #2563eb; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="status">
+      <div class="left">
+        <span class="dot"></span>
+        <span id="status-text">Requesting GPS…</span>
+      </div>
+      <span id="counts"></span>
+      <button id="export-btn">Export</button>
+    </div>
+    <div id="map"></div>
+    <div id="buttons">
+      <button class="btn-none"     data-type="none">No Evidence</button>
+      <button class="btn-evidence" data-type="evidence">Evidence</button>
+      <button class="btn-find"     data-type="find">Find</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+  <script>
+    const STORAGE_KEY = 'knapscout_survey_v1';
+
+    let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {
+      version: 1,
+      started: new Date().toISOString(),
+      pins: [],
+      track: []
+    };
+    if (!state.started) state.started = new Date().toISOString();
+
+    let currentPosition = null;
+    let userMarker = null;
+    let firstFix = true;
+
+    const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const trackLine = L.polyline(
+      state.track.map(p => [p.lat, p.lng]),
+      { color: '#3b82f6', weight: 4, opacity: 0.85 }
+    ).addTo(map);
+
+    const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const countsEl = document.getElementById('counts');
+
+    function setStatus(cls, text) {
+      statusEl.className = cls;
+      statusText.textContent = text;
+    }
+
+    function updateCounts() {
+      const n = state.pins.filter(p => p.type === 'none').length;
+      const e = state.pins.filter(p => p.type === 'evidence').length;
+      const f = state.pins.filter(p => p.type === 'find').length;
+      countsEl.textContent = `N:${n} E:${e} F:${f}`;
+    }
+
+    function save() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      updateCounts();
+    }
+
+    function pinIcon(type) {
+      return L.divIcon({
+        className: '',
+        html: `<div class="pin ${type}"></div>`,
+        iconSize: [22, 22], iconAnchor: [11, 11]
+      });
+    }
+
+    function userIcon() {
+      return L.divIcon({
+        className: '',
+        html: `<div class="user-pin"></div>`,
+        iconSize: [18, 18], iconAnchor: [9, 9]
+      });
+    }
+
+    function openPinPopup(marker, pin) {
+      const dt = new Date(pin.timestamp).toLocaleString();
+      const html = `
+        <div class="meta">
+          <b>${pin.type.toUpperCase()}</b><br>
+          ${dt}<br>
+          ${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}${
+            pin.accuracy ? ` · ±${Math.round(pin.accuracy)}m` : ''
+          }
+        </div>
+        <textarea class="pin-note" placeholder="Add a note..."></textarea>
+        <button class="save-note">Save note</button>
+      `;
+      marker.bindPopup(html, { maxWidth: 280, minWidth: 220 }).openPopup();
+      setTimeout(() => {
+        const el = marker.getPopup().getElement();
+        if (!el) return;
+        const ta = el.querySelector('.pin-note');
+        const btn = el.querySelector('.save-note');
+        ta.value = pin.note || '';
+        btn.addEventListener('click', () => {
+          pin.note = ta.value;
+          save();
+          btn.textContent = 'Saved ✓';
+          setTimeout(() => marker.closePopup(), 500);
+        });
+      }, 0);
+    }
+
+    function addPinToMap(pin) {
+      const marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin.type) }).addTo(map);
+      marker.on('click', () => openPinPopup(marker, pin));
+    }
+
+    state.pins.forEach(addPinToMap);
+    updateCounts();
+
+    function haversine(lat1, lng1, lat2, lng2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 +
+                Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+                Math.sin(dLng/2)**2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    function onPosition(pos) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      currentPosition = { lat: latitude, lng: longitude, accuracy };
+
+      if (!userMarker) {
+        userMarker = L.marker([latitude, longitude], {
+          icon: userIcon(), zIndexOffset: 1000, interactive: false
+        }).addTo(map);
+      } else {
+        userMarker.setLatLng([latitude, longitude]);
+      }
+      if (firstFix) {
+        map.setView([latitude, longitude], 18);
+        firstFix = false;
+      }
+      setStatus('ok', `GPS ±${Math.round(accuracy)}m`);
+
+      // Record track point if user moved meaningfully (>= 3m)
+      const last = state.track[state.track.length - 1];
+      if (!last || haversine(last.lat, last.lng, latitude, longitude) >= 3) {
+        const pt = { lat: latitude, lng: longitude, t: new Date().toISOString() };
+        state.track.push(pt);
+        trackLine.addLatLng([latitude, longitude]);
+        save();
+      }
+    }
+
+    function onPositionError(err) {
+      setStatus('err', `GPS error: ${err.message}`);
+    }
+
+    if (!navigator.geolocation) {
+      setStatus('err', 'GPS not available');
+    } else {
+      navigator.geolocation.watchPosition(onPosition, onPositionError, {
+        enableHighAccuracy: true, maximumAge: 2000, timeout: 20000
+      });
+    }
+
+    document.querySelectorAll('#buttons button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!currentPosition) {
+          setStatus('err', 'Waiting for GPS fix…');
+          return;
+        }
+        const type = btn.dataset.type;
+        const pin = {
+          id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+          type,
+          lat: currentPosition.lat,
+          lng: currentPosition.lng,
+          accuracy: currentPosition.accuracy,
+          timestamp: new Date().toISOString(),
+          note: ''
+        };
+        state.pins.push(pin);
+        save();
+        addPinToMap(pin);
+      });
+    });
+
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const payload = {
+        ...state,
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `knapscout_survey_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  </script>
+</body>
+</html>
