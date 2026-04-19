@@ -29,6 +29,17 @@
     #status.err .dot { background: #ef4444; }
     #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
     #counts { color: #9ca3af; font-size: 11px; white-space: nowrap; }
+
+    #gps-accuracy {
+      font-size: 22px; font-weight: 800; line-height: 1.1;
+      letter-spacing: 0.3px; white-space: nowrap; flex-shrink: 0;
+      padding: 2px 4px;
+    }
+    .acc-status-good    { color: #34d37a; }
+    .acc-status-ok      { color: #f0c420; }
+    .acc-status-warn    { color: #ff8c42; }
+    .acc-status-bad     { color: #ef4444; }
+    .acc-status-unknown { color: #9ca3af; }
     #status button {
       color: white; border: none;
       padding: 5px 10px; border-radius: 5px;
@@ -55,9 +66,59 @@
       cursor: pointer;
     }
     #buttons button:active { transform: scale(0.96); filter: brightness(0.92); }
+    #buttons button {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 4px;
+    }
     .btn-none     { background: #9ca3af; }
     .btn-evidence { background: #fbbf24; }
     .btn-find     { background: #22c55e; }
+
+    .btn-acc {
+      background: white;
+      padding: 2px 10px; border-radius: 10px;
+      font-size: 13px; font-weight: 800;
+      text-transform: none; letter-spacing: 0;
+      min-width: 44px; text-align: center;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+    .acc-btn-good    { color: #2d7a3e; }
+    .acc-btn-ok      { color: #c9a227; }
+    .acc-btn-warn    { color: #d96e2a; }
+    .acc-btn-bad     { color: #c13838; }
+    .acc-btn-unknown { color: #6b7280; }
+
+    #confirm-modal {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 10000;
+      padding: 20px;
+    }
+    #confirm-modal[hidden] { display: none; }
+    .confirm-card {
+      background: white; border-radius: 14px;
+      padding: 20px; max-width: 340px; width: 100%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    .confirm-title {
+      font-size: 18px; font-weight: 700;
+      color: #111827; margin-bottom: 8px;
+    }
+    .confirm-message {
+      font-size: 15px; color: #374151;
+      margin-bottom: 18px; line-height: 1.4;
+    }
+    .confirm-buttons { display: flex; gap: 10px; }
+    .confirm-buttons button {
+      flex: 1; padding: 12px;
+      border: none; border-radius: 8px;
+      font-size: 15px; font-weight: 700;
+    }
+    .confirm-cancel { background: #e5e7eb; color: #111827; }
+    .confirm-cancel:active { background: #d1d5db; }
+    .confirm-ok { background: #c13838; color: white; }
+    .confirm-ok:active { background: #a12a2a; }
 
     .pin {
       width: 32px; height: 32px; border-radius: 50%;
@@ -99,6 +160,7 @@
         <span id="status-text">Requesting GPS…</span>
         <span id="counts"></span>
       </div>
+      <div id="gps-accuracy" class="acc-status-unknown">GPS: --</div>
       <div class="right">
         <button id="clear-btn">Clear</button>
         <button id="export-btn">Export</button>
@@ -106,9 +168,20 @@
     </div>
     <div id="map"></div>
     <div id="buttons">
-      <button class="btn-none"     data-type="none">No Evidence</button>
-      <button class="btn-evidence" data-type="evidence">Evidence</button>
-      <button class="btn-find"     data-type="find">Find</button>
+      <button class="btn-none"     data-type="none">No Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
+      <button class="btn-evidence" data-type="evidence">Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
+      <button class="btn-find"     data-type="find">Find<span class="btn-acc acc-btn-unknown">--</span></button>
+    </div>
+  </div>
+
+  <div id="confirm-modal" hidden>
+    <div class="confirm-card">
+      <div class="confirm-title">Poor GPS signal</div>
+      <div class="confirm-message"></div>
+      <div class="confirm-buttons">
+        <button class="confirm-cancel" type="button">Cancel</button>
+        <button class="confirm-ok" type="button">Drop pin</button>
+      </div>
     </div>
   </div>
 
@@ -161,6 +234,47 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('status-text');
     const countsEl = document.getElementById('counts');
+    const gpsAccuracyEl = document.getElementById('gps-accuracy');
+    const btnAccEls = document.querySelectorAll('.btn-acc');
+
+    function accuracyTier(acc) {
+      if (acc == null || !isFinite(acc)) return 'unknown';
+      if (acc < 10) return 'good';
+      if (acc < 50) return 'ok';
+      if (acc < 200) return 'warn';
+      return 'bad';
+    }
+
+    function updateAccuracyUI(accuracy) {
+      const tier = accuracyTier(accuracy);
+      const text = (accuracy != null && isFinite(accuracy)) ? `${Math.round(accuracy)}m` : '--';
+      gpsAccuracyEl.textContent = `GPS: ${text}`;
+      gpsAccuracyEl.className = 'acc-status-' + tier;
+      btnAccEls.forEach(el => {
+        el.textContent = text;
+        el.className = 'btn-acc acc-btn-' + tier;
+      });
+    }
+
+    function confirmPoorGPS(accuracy) {
+      return new Promise(resolve => {
+        const modal = document.getElementById('confirm-modal');
+        modal.querySelector('.confirm-message').textContent =
+          `Accuracy is ${Math.round(accuracy)}m. Pin location will be approximate. Drop anyway?`;
+        const okBtn = modal.querySelector('.confirm-ok');
+        const cancelBtn = modal.querySelector('.confirm-cancel');
+        function cleanup() {
+          modal.hidden = true;
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+        }
+        function onOk() { cleanup(); resolve(true); }
+        function onCancel() { cleanup(); resolve(false); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modal.hidden = false;
+      });
+    }
 
     function setStatus(cls, text) {
       statusEl.className = cls;
@@ -258,6 +372,7 @@
         firstFix = false;
       }
       setStatus('ok', `GPS ±${Math.round(accuracy)}m`);
+      updateAccuracyUI(accuracy);
 
       // Record track point if user moved meaningfully (>= 3m)
       const last = state.track[state.track.length - 1];
@@ -282,12 +397,19 @@
     }
 
     document.querySelectorAll('#buttons button').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         if (!currentPosition) {
           setStatus('err', 'Waiting for GPS fix…');
           return;
         }
         const type = btn.dataset.type;
+        const acc = currentPosition.accuracy;
+
+        if (acc != null && isFinite(acc) && acc > 100) {
+          const ok = await confirmPoorGPS(acc);
+          if (!ok) return;
+        }
+
         const pin = {
           id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
           type,
