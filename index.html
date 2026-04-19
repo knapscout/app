@@ -27,8 +27,17 @@
     #status .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
     #status.ok .dot { background: #10b981; }
     #status.err .dot { background: #ef4444; }
-    #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+    #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; }
     #counts { color: #9ca3af; font-size: 11px; white-space: nowrap; }
+
+    #status.tier-good .dot { background: #2d7a3e; }
+    #status.tier-ok   .dot { background: #c9a227; }
+    #status.tier-warn .dot { background: #d96e2a; }
+    #status.tier-bad  .dot { background: #c13838; }
+    #status.tier-good #status-text { color: #34d37a; }
+    #status.tier-ok   #status-text { color: #f0c420; }
+    #status.tier-warn #status-text { color: #ff8c42; }
+    #status.tier-bad  #status-text { color: #ef4444; }
 
     #gps-accuracy {
       font-size: 22px; font-weight: 800; line-height: 1.1;
@@ -75,18 +84,17 @@
     .btn-find     { background: #22c55e; }
 
     .btn-acc {
-      background: white;
       padding: 2px 10px; border-radius: 10px;
       font-size: 13px; font-weight: 800;
       text-transform: none; letter-spacing: 0;
       min-width: 44px; text-align: center;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
-    .acc-btn-good    { color: #2d7a3e; }
-    .acc-btn-ok      { color: #c9a227; }
-    .acc-btn-warn    { color: #d96e2a; }
-    .acc-btn-bad     { color: #c13838; }
-    .acc-btn-unknown { color: #6b7280; }
+    .acc-btn-good    { background: #2d7a3e; color: white; }
+    .acc-btn-ok      { background: #c9a227; color: #3d2d00; }
+    .acc-btn-warn    { background: #d96e2a; color: white; }
+    .acc-btn-bad     { background: #c13838; color: white; }
+    .acc-btn-unknown { background: white;   color: #6b7280; }
 
     #confirm-modal {
       position: fixed; inset: 0;
@@ -245,6 +253,8 @@
       return 'bad';
     }
 
+    const TIER_CLASSES = ['tier-good', 'tier-ok', 'tier-warn', 'tier-bad', 'tier-unknown'];
+
     function updateAccuracyUI(accuracy) {
       const tier = accuracyTier(accuracy);
       const text = (accuracy != null && isFinite(accuracy)) ? `${Math.round(accuracy)}m` : '--';
@@ -254,6 +264,8 @@
         el.textContent = text;
         el.className = 'btn-acc acc-btn-' + tier;
       });
+      statusEl.classList.remove(...TIER_CLASSES);
+      statusEl.classList.add('tier-' + tier);
     }
 
     function confirmPoorGPS(accuracy) {
@@ -277,7 +289,8 @@
     }
 
     function setStatus(cls, text) {
-      statusEl.className = cls;
+      statusEl.classList.remove('ok', 'err');
+      if (cls) statusEl.classList.add(cls);
       statusText.textContent = text;
     }
 
