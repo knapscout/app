@@ -272,7 +272,7 @@
       return new Promise(resolve => {
         const modal = document.getElementById('confirm-modal');
         modal.querySelector('.confirm-message').textContent =
-          `Accuracy is ${Math.round(accuracy)}m. Pin location will be approximate. Drop anyway?`;
+          `GPS accuracy is low (${Math.round(accuracy)}m). Pin location may be unreliable. Drop pin anyway?`;
         const okBtn = modal.querySelector('.confirm-ok');
         const cancelBtn = modal.querySelector('.confirm-cancel');
         function cleanup() {
