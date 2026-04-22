@@ -418,7 +418,7 @@
         const type = btn.dataset.type;
         const acc = currentPosition.accuracy;
 
-        if (acc != null && isFinite(acc) && acc > 10) {
+        if (acc != null && isFinite(acc) && acc > 1) {
           const ok = await confirmPoorGPS(acc);
           if (!ok) return;
         }
