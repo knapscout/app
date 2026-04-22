@@ -56,6 +56,8 @@
     }
     #export-btn { background: #3b82f6; }
     #export-btn:active { background: #2563eb; }
+    #import-btn { background: #3b82f6; }
+    #import-btn:active { background: #2563eb; }
     #clear-btn { background: #6b7280; }
     #clear-btn:active { background: #4b5563; }
 
@@ -171,7 +173,9 @@
       <div id="gps-accuracy" class="acc-status-unknown">GPS: --</div>
       <div class="right">
         <button id="clear-btn">Clear</button>
+        <button id="import-btn">Import</button>
         <button id="export-btn">Export</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
       </div>
     </div>
     <div id="map"></div>
@@ -365,6 +369,13 @@
       marker.on('click', () => openPinPopup(marker, pin));
     }
 
+    function renderAllPins() {
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && layer !== userMarker) map.removeLayer(layer);
+      });
+      state.pins.forEach(addPinToMap);
+    }
+
     state.pins.forEach(addPinToMap);
     updateCounts();
 
@@ -467,6 +478,9 @@
     document.getElementById('export-btn').addEventListener('click', async () => {
       const payload = {
         ...state,
+        username,
+        pins: state.pins.map(p => ({ ...p, created_by: p.created_by || username })),
+        track: state.track.map(t => ({ ...t, created_by: t.created_by || username })),
         exported_at: new Date().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -491,6 +505,68 @@
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    document.getElementById('import-btn').addEventListener('click', () => {
+      document.getElementById('import-file').click();
+    });
+
+    document.getElementById('import-file').addEventListener('change', async (ev) => {
+      const fileInput = ev.target;
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+
+      let imported;
+      try {
+        const text = await file.text();
+        imported = JSON.parse(text);
+      } catch (err) {
+        alert('Could not read file. Make sure it is a valid KnapScout export.');
+        return;
+      }
+
+      let sourceUsername = ((imported && imported.username) || '').trim().toLowerCase();
+      if (!sourceUsername) {
+        const entered = prompt('What name should we tag these pins with? (e.g. burke)');
+        sourceUsername = (entered || '').trim().toLowerCase();
+        if (!sourceUsername) {
+          alert('Import cancelled.');
+          return;
+        }
+      }
+
+      const importedPins = Array.isArray(imported.pins) ? imported.pins : [];
+      const importedTracks = Array.isArray(imported.track) ? imported.track : [];
+
+      if (!confirm(`Import ${importedPins.length} pins and ${importedTracks.length} tracks from ${sourceUsername}?`)) return;
+
+      const pinIndex = new Map(state.pins.map((p, i) => [p.id, i]));
+      for (const p of importedPins) {
+        const newId = `${sourceUsername}_${p.id}`;
+        const tagged = { ...p, id: newId, created_by: p.created_by || sourceUsername };
+        if (pinIndex.has(newId)) {
+          state.pins[pinIndex.get(newId)] = tagged;
+        } else {
+          pinIndex.set(newId, state.pins.length);
+          state.pins.push(tagged);
+        }
+      }
+
+      const trackKey = (t) => `${t.created_by || ''}|${t.t || ''}`;
+      const trackSeen = new Set(state.track.map(trackKey));
+      for (const t of importedTracks) {
+        const tagged = { ...t, created_by: t.created_by || sourceUsername };
+        const key = trackKey(tagged);
+        if (!trackSeen.has(key)) {
+          trackSeen.add(key);
+          state.track.push(tagged);
+        }
+      }
+
+      save();
+      renderAllPins();
+      alert(`Imported ${importedPins.length} pins and ${importedTracks.length} tracks from ${sourceUsername}.`);
     });
   </script>
 </body>
