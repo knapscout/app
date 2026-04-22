@@ -198,6 +198,15 @@
           crossorigin=""></script>
   <script>
     const STORAGE_KEY = 'knapscout_survey_v1';
+    const USERNAME_KEY = 'knapscout_username';
+
+    let username = localStorage.getItem(USERNAME_KEY);
+    if (username == null) {
+      const entered = prompt("What's your name for KnapScout exports? (e.g. jason, burke)");
+      const cleaned = (entered || '').trim().toLowerCase();
+      username = cleaned || 'user';
+      localStorage.setItem(USERNAME_KEY, username);
+    }
 
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {
       version: 1,
@@ -455,16 +464,29 @@
       updateCounts();
     });
 
-    document.getElementById('export-btn').addEventListener('click', () => {
+    document.getElementById('export-btn').addEventListener('click', async () => {
       const payload = {
         ...state,
         exported_at: new Date().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = `knapscout_${username}_${today}.json`;
+      const file = new File([blob], filename, { type: 'application/json' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: 'KnapScout Survey' });
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+        }
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `knapscout_survey_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
