@@ -285,30 +285,35 @@
     .pin.find     { background: #22c55e; }
 
     .user-pin-wrap {
-      width: 32px; height: 32px; position: relative;
-      display: flex; align-items: center; justify-content: center;
+      width: 140px; height: 140px; position: relative;
     }
     .user-pin-dot {
       width: 18px; height: 18px; border-radius: 50%;
       background: #3b82f6; border: 3px solid white;
       box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
-      position: absolute; left: 7px; top: 7px;
+      position: absolute; left: 61px; top: 61px;
       z-index: 2;
     }
-    .user-pin-arrow {
+    /* Directional beam radiating from the dot in the device-facing direction */
+    .user-pin-cone {
       position: absolute;
-      top: -2px; left: 12px;
-      width: 0; height: 0;
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-bottom: 10px solid #3b82f6;
-      transform-origin: 6px 16px;
+      width: 70px; height: 60px;
+      left: 35px; top: 10px;
+      clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
+      background: radial-gradient(
+        ellipse at 50% 100%,
+        rgba(103, 232, 249, 0.55) 0%,
+        rgba(103, 232, 249, 0.32) 40%,
+        rgba(103, 232, 249, 0.12) 75%,
+        rgba(103, 232, 249, 0) 100%
+      );
+      transform-origin: 50% 100%;
       transform: rotate(0deg);
       transition: transform 0.15s linear;
+      pointer-events: none;
       z-index: 1;
-      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
     }
-    .user-pin-arrow.hidden { display: none; }
+    .user-pin-cone.hidden { display: none; }
 
     /* Vertex handles (boundary editing) */
     .vertex-handle {
@@ -732,11 +737,11 @@
       return L.divIcon({
         className: '',
         html: `<div class="user-pin-wrap">
-                 <div class="user-pin-arrow${currentHeading == null ? ' hidden' : ''}"
+                 <div class="user-pin-cone${currentHeading == null ? ' hidden' : ''}"
                       style="transform: rotate(${currentHeading == null ? 0 : currentHeading}deg);"></div>
                  <div class="user-pin-dot"></div>
                </div>`,
-        iconSize: [32, 32], iconAnchor: [16, 16]
+        iconSize: [140, 140], iconAnchor: [70, 70]
       });
     }
 
@@ -879,13 +884,13 @@
       if (!userMarker) return;
       const el = userMarker.getElement();
       if (!el) return;
-      const arrow = el.querySelector('.user-pin-arrow');
-      if (!arrow) return;
+      const cone = el.querySelector('.user-pin-cone');
+      if (!cone) return;
       if (currentHeading == null) {
-        arrow.classList.add('hidden');
+        cone.classList.add('hidden');
       } else {
-        arrow.classList.remove('hidden');
-        arrow.style.transform = `rotate(${currentHeading}deg)`;
+        cone.classList.remove('hidden');
+        cone.style.transform = `rotate(${currentHeading}deg)`;
       }
     }
 
