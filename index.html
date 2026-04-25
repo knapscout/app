@@ -430,6 +430,19 @@
     </div>
   </div>
 
+  <!-- Compass onboarding (one-time, first-load) -->
+  <div id="compass-onboarding" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-title">Enable Compass</div>
+      <div class="modal-message">
+        KnapScout uses your phone's compass to show which way you're facing in the field. Tap below to enable.
+      </div>
+      <div class="modal-buttons">
+        <button class="modal-ok-blue" type="button" id="compass-onboarding-btn" style="flex: 1;">Enable Compass</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sites panel / detail / unsorted list -->
   <div id="panel" hidden>
     <div class="panel-card" id="panel-card">
@@ -481,7 +494,8 @@
     let userMarker = null;
     let firstFix = true;
     let currentHeading = null;       // degrees from north, or null
-    let orientationRequested = false;
+    const COMPASS_ASKED_KEY = 'compass_permission_asked';
+    let orientationAttached = false;
 
     let activeFilter = '__all__';     // site_id, '__all__', or '__unsorted__'
 
@@ -895,6 +909,8 @@
     }
 
     function attachOrientation() {
+      if (orientationAttached) return;
+      orientationAttached = true;
       window.addEventListener('deviceorientation', (e) => {
         let h = null;
         if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
@@ -910,19 +926,40 @@
       }, { passive: true });
     }
 
-    async function ensureOrientationPermission() {
-      if (orientationRequested) return;
-      orientationRequested = true;
+    /* Compass onboarding ----------------------------------- */
+    async function handleCompassOnboardingClick() {
+      const modal = document.getElementById('compass-onboarding');
       try {
         if (typeof DeviceOrientationEvent !== 'undefined' &&
             typeof DeviceOrientationEvent.requestPermission === 'function') {
+          /* iOS 13+ — must run inside this user-gesture handler */
           const r = await DeviceOrientationEvent.requestPermission();
           if (r === 'granted') attachOrientation();
         } else if (typeof DeviceOrientationEvent !== 'undefined') {
+          /* Android / desktop — no permission needed */
           attachOrientation();
         }
-      } catch (_) { /* ignore — fallback is no arrow */ }
+      } catch (_) { /* fallback: no cone */ }
+      localStorage.setItem(COMPASS_ASKED_KEY, '1');
+      modal.hidden = true;
     }
+
+    function initCompass() {
+      const asked = localStorage.getItem(COMPASS_ASKED_KEY);
+      if (asked) {
+        /* Permission already requested in a prior session.
+           If it was granted, attaching the listener is enough — events will fire.
+           If it was denied, events simply won't fire and the cone stays hidden.
+           We must NOT re-call requestPermission() on load (no user gesture). */
+        if (typeof DeviceOrientationEvent !== 'undefined') {
+          attachOrientation();
+        }
+      } else {
+        document.getElementById('compass-onboarding').hidden = false;
+      }
+    }
+    document.getElementById('compass-onboarding-btn')
+      .addEventListener('click', handleCompassOnboardingClick);
 
     /* Pin drop --------------------------------------------- */
     function confirmPoorGPS(accuracy) {
@@ -937,7 +974,6 @@
 
     document.querySelectorAll('#buttons button').forEach(btn => {
       btn.addEventListener('click', async () => {
-        ensureOrientationPermission();   // first user gesture — ask for compass perm
         if (!currentPosition) {
           setStatus('err', 'Waiting for GPS fix…');
           return;
@@ -1676,8 +1712,9 @@
          No extra logic needed here, but kept for clarity. */
     });
 
-    /* Initial state once orientation perm available */
-    /* (compass perm is requested on first pin button tap; see ensureOrientationPermission) */
+    /* Initialize compass — show one-time onboarding overlay if not yet asked,
+       otherwise attach the orientation listener silently. */
+    initCompass();
 
   </script>
 </body>
