@@ -17,13 +17,13 @@
 
     #status {
       background: #111827; color: #f3f4f6;
-      padding: 4px 10px; font-size: 12px;
+      padding: 4px 8px; font-size: 12px;
       padding-top: calc(4px + env(safe-area-inset-top));
       display: flex; justify-content: space-between; align-items: center;
-      gap: 8px; flex-shrink: 0; min-height: 32px;
+      gap: 6px; flex-shrink: 0; min-height: 32px;
     }
     #status .left { display: flex; gap: 8px; align-items: center; min-width: 0; flex: 1; }
-    #status .right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    #status .right { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
     #status .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
     #status.ok .dot { background: #10b981; }
     #status.err .dot { background: #ef4444; }
@@ -40,7 +40,7 @@
     #status.tier-bad  #status-text { color: #ef4444; }
 
     #gps-accuracy {
-      font-size: 22px; font-weight: 800; line-height: 1.1;
+      font-size: 20px; font-weight: 800; line-height: 1.1;
       letter-spacing: 0.3px; white-space: nowrap; flex-shrink: 0;
       padding: 2px 4px;
     }
@@ -51,17 +51,34 @@
     .acc-status-unknown { color: #9ca3af; }
     #status button {
       color: white; border: none;
-      padding: 5px 10px; border-radius: 5px;
+      padding: 5px 8px; border-radius: 5px;
       font-size: 12px; font-weight: 600; flex-shrink: 0;
     }
     #export-btn { background: #3b82f6; }
     #export-btn:active { background: #2563eb; }
     #import-btn { background: #3b82f6; }
     #import-btn:active { background: #2563eb; }
-    #clear-btn { background: #6b7280; }
+    #sites-btn  { background: #a855f7; }
+    #sites-btn:active { background: #9333ea; }
+    #clear-btn  { background: #6b7280; }
     #clear-btn:active { background: #4b5563; }
 
-    #map { flex: 1; background: #e5e7eb; }
+    #map { flex: 1; background: #e5e7eb; position: relative; }
+
+    #filter-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; background: #1f2937;
+      flex-shrink: 0; border-top: 1px solid #374151;
+    }
+    #filter-bar label {
+      color: #9ca3af; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    #site-filter {
+      flex: 1; background: #111827; color: #f3f4f6;
+      border: 1px solid #374151; border-radius: 6px;
+      padding: 6px 8px; font-size: 14px; font-weight: 600;
+    }
 
     #buttons {
       display: flex; gap: 8px; padding: 12px;
@@ -75,12 +92,10 @@
       text-transform: uppercase; letter-spacing: 0.5px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
       cursor: pointer;
-    }
-    #buttons button:active { transform: scale(0.96); filter: brightness(0.92); }
-    #buttons button {
       display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 4px;
     }
+    #buttons button:active { transform: scale(0.96); filter: brightness(0.92); }
     .btn-none     { background: #9ca3af; }
     .btn-evidence { background: #fbbf24; }
     .btn-find     { background: #22c55e; }
@@ -98,38 +113,169 @@
     .acc-btn-bad     { background: #c13838; color: white; }
     .acc-btn-unknown { background: white;   color: #6b7280; }
 
-    #confirm-modal {
+    /* Modals (confirm + name prompt) ------------------------------ */
+    .modal {
       position: fixed; inset: 0;
       background: rgba(0,0,0,0.55);
       display: flex; align-items: center; justify-content: center;
-      z-index: 10000;
-      padding: 20px;
+      z-index: 10000; padding: 20px;
     }
-    #confirm-modal[hidden] { display: none; }
-    .confirm-card {
+    .modal[hidden] { display: none; }
+    .modal-card {
       background: white; border-radius: 14px;
-      padding: 20px; max-width: 340px; width: 100%;
+      padding: 20px; max-width: 360px; width: 100%;
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
-    .confirm-title {
-      font-size: 18px; font-weight: 700;
-      color: #111827; margin-bottom: 8px;
-    }
-    .confirm-message {
-      font-size: 15px; color: #374151;
-      margin-bottom: 18px; line-height: 1.4;
-    }
-    .confirm-buttons { display: flex; gap: 10px; }
-    .confirm-buttons button {
-      flex: 1; padding: 12px;
-      border: none; border-radius: 8px;
+    .modal-title { font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 8px; }
+    .modal-message { font-size: 15px; color: #374151; margin-bottom: 18px; line-height: 1.4; }
+    .modal-buttons { display: flex; gap: 10px; }
+    .modal-buttons button {
+      flex: 1; padding: 12px; border: none; border-radius: 8px;
       font-size: 15px; font-weight: 700;
     }
-    .confirm-cancel { background: #e5e7eb; color: #111827; }
-    .confirm-cancel:active { background: #d1d5db; }
-    .confirm-ok { background: #c13838; color: white; }
-    .confirm-ok:active { background: #a12a2a; }
+    .modal-cancel { background: #e5e7eb; color: #111827; }
+    .modal-cancel:active { background: #d1d5db; }
+    .modal-ok-blue { background: #3b82f6; color: white; }
+    .modal-ok-blue:active { background: #2563eb; }
+    .modal-ok-red  { background: #c13838; color: white; }
+    .modal-ok-red:active { background: #a12a2a; }
+    .modal-input {
+      width: 100%; padding: 10px;
+      border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 16px; margin-bottom: 14px;
+    }
 
+    /* Sliding panel (Sites list / Site detail / Unsorted list) */
+    #panel {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 9000; display: flex;
+      align-items: stretch; justify-content: center;
+      padding: 0;
+    }
+    #panel[hidden] { display: none; }
+    .panel-card {
+      background: white; width: 100%; max-width: 480px;
+      max-height: 100%; overflow-y: auto;
+      padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+      padding-top: calc(16px + env(safe-area-inset-top));
+      display: flex; flex-direction: column;
+    }
+    .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px; gap: 10px;
+    }
+    .panel-title { font-size: 20px; font-weight: 700; color: #111827; }
+    .panel-close {
+      background: #e5e7eb; color: #111827;
+      border: none; padding: 8px 12px; border-radius: 8px;
+      font-size: 14px; font-weight: 700;
+    }
+    .panel-close:active { background: #d1d5db; }
+    .panel-section { margin-top: 12px; }
+    .panel-toggle {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 12px; background: #f3f4f6; border-radius: 8px;
+      font-size: 13px; font-weight: 600; color: #374151;
+    }
+    .panel-toggle input { width: 18px; height: 18px; }
+
+    .site-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 12px; background: #f9fafb;
+      border: 1px solid #e5e7eb; border-radius: 10px;
+      margin-bottom: 6px; cursor: pointer;
+    }
+    .site-row:active { background: #e5e7eb; }
+    .site-row .site-name { font-size: 15px; font-weight: 700; color: #111827; }
+    .site-row .site-count { font-size: 13px; color: #6b7280; }
+    .site-row.unsorted .site-name { color: #6b7280; font-style: italic; }
+
+    .new-site-btn {
+      width: 100%; padding: 12px;
+      background: #a855f7; color: white;
+      border: none; border-radius: 10px;
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .new-site-btn:active { background: #9333ea; }
+
+    /* Detail view */
+    .detail-name {
+      font-size: 22px; font-weight: 700; color: #111827;
+      padding: 8px 4px; border-bottom: 2px dashed #e5e7eb;
+      margin-bottom: 12px; outline: none;
+    }
+    .detail-name:focus {
+      border-bottom-color: #a855f7;
+      background: #faf5ff;
+    }
+    .detail-stat {
+      font-size: 13px; color: #4b5563; margin-bottom: 12px;
+    }
+    .detail-notes-label {
+      font-size: 12px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px; color: #6b7280; margin-bottom: 6px;
+    }
+    .detail-notes {
+      width: 100%; min-height: 120px; padding: 10px;
+      border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 14px; font-family: inherit; resize: vertical;
+      margin-bottom: 14px;
+    }
+    .detail-actions { display: flex; flex-direction: column; gap: 8px; }
+    .detail-actions button {
+      width: 100%; padding: 12px; border: none; border-radius: 10px;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+    }
+    .detail-actions .act-view { background: #3b82f6; color: white; }
+    .detail-actions .act-edit { background: #a855f7; color: white; }
+    .detail-actions .act-delete { background: #c13838; color: white; }
+
+    .unsorted-pin-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 12px; background: #f9fafb;
+      border: 1px solid #e5e7eb; border-radius: 8px;
+      margin-bottom: 5px; gap: 10px;
+    }
+    .unsorted-pin-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .unsorted-pin-type {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .unsorted-pin-type.find { color: #15803d; }
+    .unsorted-pin-type.evidence { color: #b45309; }
+    .unsorted-pin-type.none { color: #6b7280; }
+    .unsorted-pin-time { font-size: 11px; color: #6b7280; }
+    .move-btn {
+      background: #3b82f6; color: white;
+      border: none; padding: 8px 10px; border-radius: 6px;
+      font-size: 12px; font-weight: 700;
+    }
+    .move-btn:active { background: #2563eb; }
+
+    /* HUDs (draw mode + edit mode toolbars) */
+    .hud {
+      position: absolute; top: 8px; left: 8px; right: 8px;
+      background: rgba(17, 24, 39, 0.95); color: #f3f4f6;
+      border-radius: 10px; padding: 10px 12px;
+      font-size: 13px; font-weight: 600;
+      display: flex; flex-direction: column; gap: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 800; pointer-events: auto;
+    }
+    .hud[hidden] { display: none; }
+    .hud-text { line-height: 1.4; font-size: 13px; }
+    .hud-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .hud-actions button {
+      flex: 1; min-width: 0; padding: 8px;
+      font-size: 13px; font-weight: 700; border: none; border-radius: 6px;
+    }
+    .hud-actions .hud-cancel  { background: #6b7280; color: white; }
+    .hud-actions .hud-restart { background: #d96e2a; color: white; }
+    .hud-actions .hud-save    { background: #22c55e; color: #052e16; }
+
+    /* Pin and user marker styling */
     .pin {
       width: 32px; height: 32px; border-radius: 50%;
       border: 4px solid white; box-shadow: 0 0 0 3px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35);
@@ -138,12 +284,50 @@
     .pin.evidence { background: #fbbf24; }
     .pin.find     { background: #22c55e; }
 
-    .user-pin {
+    .user-pin-wrap {
+      width: 32px; height: 32px; position: relative;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .user-pin-dot {
       width: 18px; height: 18px; border-radius: 50%;
       background: #3b82f6; border: 3px solid white;
       box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+      position: absolute; left: 7px; top: 7px;
+      z-index: 2;
     }
+    .user-pin-arrow {
+      position: absolute;
+      top: -2px; left: 12px;
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 10px solid #3b82f6;
+      transform-origin: 6px 16px;
+      transform: rotate(0deg);
+      transition: transform 0.15s linear;
+      z-index: 1;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+    }
+    .user-pin-arrow.hidden { display: none; }
 
+    /* Vertex handles (boundary editing) */
+    .vertex-handle {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: #f3f4f6; border: 3px solid #a855f7;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      cursor: grab;
+    }
+    .vertex-handle:active { cursor: grabbing; background: #fde68a; }
+
+    /* Provisional draw points */
+    .draw-point {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #a855f7; border: 2px solid white;
+      box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.5);
+    }
+    .draw-point.first { background: #fbbf24; border-color: white; }
+
+    /* Pin popup */
     .leaflet-popup-content { margin: 12px 14px; font-size: 14px; min-width: 220px; }
     .leaflet-popup-content .meta {
       color: #6b7280; font-size: 12px; margin-bottom: 8px; line-height: 1.4;
@@ -160,6 +344,10 @@
       border-radius: 6px; font-size: 15px; font-weight: 600;
     }
     .leaflet-popup-content .save-note:active { background: #2563eb; }
+    .leaflet-popup-content .pin-site {
+      color: #a855f7; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -172,28 +360,75 @@
       </div>
       <div id="gps-accuracy" class="acc-status-unknown">GPS: --</div>
       <div class="right">
-        <button id="clear-btn">Clear</button>
-        <button id="import-btn">Import</button>
-        <button id="export-btn">Export</button>
+        <button id="sites-btn" type="button">Sites</button>
+        <button id="clear-btn" type="button">Clear</button>
+        <button id="import-btn" type="button">Import</button>
+        <button id="export-btn" type="button">Export</button>
         <input type="file" id="import-file" accept="application/json,.json" hidden>
       </div>
     </div>
-    <div id="map"></div>
+    <div id="map">
+      <div id="draw-hud" class="hud" hidden>
+        <div class="hud-text" id="draw-hud-text">
+          Tap to add boundary points. Tap the first point to close the polygon.
+        </div>
+        <div class="hud-actions">
+          <button class="hud-cancel"  type="button" id="draw-cancel">Cancel</button>
+          <button class="hud-restart" type="button" id="draw-restart">Erase &amp; Restart</button>
+        </div>
+      </div>
+      <div id="edit-hud" class="hud" hidden>
+        <div class="hud-text" id="edit-hud-text">
+          Drag corners to reshape. Tap an edge to add a corner. Long-press a corner to remove it.
+        </div>
+        <div class="hud-actions">
+          <button class="hud-cancel"  type="button" id="edit-cancel">Cancel</button>
+          <button class="hud-restart" type="button" id="edit-restart">Erase &amp; Restart</button>
+          <button class="hud-save"    type="button" id="edit-save">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="filter-bar">
+      <label for="site-filter">Site:</label>
+      <select id="site-filter">
+        <option value="__all__">All Sites</option>
+      </select>
+    </div>
     <div id="buttons">
-      <button class="btn-none"     data-type="none">No Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
-      <button class="btn-evidence" data-type="evidence">Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
-      <button class="btn-find"     data-type="find">Find<span class="btn-acc acc-btn-unknown">--</span></button>
+      <button class="btn-none"     data-type="none" type="button">No Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
+      <button class="btn-evidence" data-type="evidence" type="button">Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
+      <button class="btn-find"     data-type="find" type="button">Find<span class="btn-acc acc-btn-unknown">--</span></button>
     </div>
   </div>
 
-  <div id="confirm-modal" hidden>
-    <div class="confirm-card">
-      <div class="confirm-title">Poor GPS signal</div>
-      <div class="confirm-message"></div>
-      <div class="confirm-buttons">
-        <button class="confirm-cancel" type="button">Cancel</button>
-        <button class="confirm-ok" type="button">Drop pin</button>
+  <!-- Confirm modal (re-used: GPS warning, delete confirm, etc.) -->
+  <div id="confirm-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-title" id="confirm-title">Confirm</div>
+      <div class="modal-message" id="confirm-message"></div>
+      <div class="modal-buttons">
+        <button class="modal-cancel" type="button" id="confirm-cancel">Cancel</button>
+        <button class="modal-ok-red" type="button" id="confirm-ok">OK</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Name prompt modal (used for new site name) -->
+  <div id="name-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-title" id="name-title">Site name</div>
+      <input class="modal-input" id="name-input" type="text" placeholder="e.g. Stonegate" maxlength="60">
+      <div class="modal-buttons">
+        <button class="modal-cancel" type="button" id="name-cancel">Cancel</button>
+        <button class="modal-ok-blue" type="button" id="name-ok">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sites panel / detail / unsorted list -->
+  <div id="panel" hidden>
+    <div class="panel-card" id="panel-card">
+      <!-- Filled dynamically -->
     </div>
   </div>
 
@@ -201,6 +436,11 @@
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
           crossorigin=""></script>
   <script>
+    /* ------------------------------------------------------------
+       KnapScout — Bite 3: site structure
+       Keeps backwards compatibility with v1 pin storage.
+    ------------------------------------------------------------ */
+
     const STORAGE_KEY = 'knapscout_survey_v1';
     const USERNAME_KEY = 'knapscout_username';
 
@@ -212,23 +452,42 @@
       localStorage.setItem(USERNAME_KEY, username);
     }
 
+    /* Load & migrate state. */
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {
-      version: 1,
+      version: 2,
       started: new Date().toISOString(),
       pins: [],
-      track: []
+      track: [],
+      sites: [],
+      show_boundaries: true
     };
     if (!state.started) state.started = new Date().toISOString();
+    if (!Array.isArray(state.pins)) state.pins = [];
+    if (!Array.isArray(state.track)) state.track = [];
+    if (!Array.isArray(state.sites)) state.sites = [];
+    if (typeof state.show_boundaries !== 'boolean') state.show_boundaries = true;
+    /* Legacy data migration: every pin needs a site_id field. */
+    state.pins.forEach(p => {
+      if (!('site_id' in p)) p.site_id = null;
+    });
+    state.version = 2;
 
     let currentPosition = null;
     let userMarker = null;
     let firstFix = true;
+    let currentHeading = null;       // degrees from north, or null
+    let orientationRequested = false;
 
+    let activeFilter = '__all__';     // site_id, '__all__', or '__unsorted__'
+
+    let drawMode = null;              // null | { points: [], pointMarkers: [], lineLayer, name?: string, replacingSiteId? }
+    let editMode = null;              // null | { siteId, originalPolygon, vertexMarkers, polygonLayer, longPressTimer }
+
+    /* Map setup ------------------------------------------------ */
     const map = L.map('map', { zoomControl: true }).setView([39.5, -98.35], 4);
 
     const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap contributors'
+      maxZoom: 19, attribution: '© OpenStreetMap contributors'
     });
     const satelliteLayer = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -238,26 +497,37 @@
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
       { maxZoom: 19, attribution: 'Tiles © Esri' }
     );
-
     osmLayer.addTo(map);
-
-    L.control.layers({
-      'Map': osmLayer,
-      'Satellite': satelliteLayer,
-      'Topo': topoLayer
-    }, null, { position: 'topright' }).addTo(map);
+    L.control.layers({ 'Map': osmLayer, 'Satellite': satelliteLayer, 'Topo': topoLayer },
+      null, { position: 'topright' }).addTo(map);
 
     const trackLine = L.polyline(
       state.track.map(p => [p.lat, p.lng]),
       { color: '#3b82f6', weight: 4, opacity: 0.85 }
     ).addTo(map);
 
+    /* Site polygon rendering pool */
+    const sitePolygonLayers = new Map();   // site_id -> L.polygon
+
+    /* Pin marker pool — used for filter show/hide */
+    const pinMarkers = new Map();          // pin.id -> L.marker
+
+    /* DOM refs ------------------------------------------------- */
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('status-text');
     const countsEl = document.getElementById('counts');
     const gpsAccuracyEl = document.getElementById('gps-accuracy');
     const btnAccEls = document.querySelectorAll('.btn-acc');
+    const filterEl = document.getElementById('site-filter');
+    const filterBarEl = document.getElementById('filter-bar');
+    const buttonsBarEl = document.getElementById('buttons');
+    const drawHud = document.getElementById('draw-hud');
+    const editHud = document.getElementById('edit-hud');
+    const drawHudText = document.getElementById('draw-hud-text');
+    const panelEl = document.getElementById('panel');
+    const panelCardEl = document.getElementById('panel-card');
 
+    /* GPS accuracy UI ----------------------------------------- */
     function accuracyTier(acc) {
       if (acc == null || !isFinite(acc)) return 'unknown';
       if (acc < 10) return 'good';
@@ -265,9 +535,7 @@
       if (acc < 200) return 'warn';
       return 'bad';
     }
-
     const TIER_CLASSES = ['tier-good', 'tier-ok', 'tier-warn', 'tier-bad', 'tier-unknown'];
-
     function updateAccuracyUI(accuracy) {
       const tier = accuracyTier(accuracy);
       const text = (accuracy != null && isFinite(accuracy)) ? `${Math.round(accuracy)}m` : '--';
@@ -280,20 +548,29 @@
       statusEl.classList.remove(...TIER_CLASSES);
       statusEl.classList.add('tier-' + tier);
     }
+    function setStatus(cls, text) {
+      statusEl.classList.remove('ok', 'err');
+      if (cls) statusEl.classList.add(cls);
+      statusText.textContent = text;
+    }
 
-    function confirmPoorGPS(accuracy) {
+    /* Generic confirm modal ----------------------------------- */
+    function confirmModal({ title = 'Confirm', message = '', okLabel = 'OK', cancelLabel = 'Cancel', destructive = false }) {
       return new Promise(resolve => {
         const modal = document.getElementById('confirm-modal');
-        modal.querySelector('.confirm-message').textContent =
-          `GPS accuracy is low (${Math.round(accuracy)}m). Pin location may be unreliable. Drop pin anyway?`;
-        const okBtn = modal.querySelector('.confirm-ok');
-        const cancelBtn = modal.querySelector('.confirm-cancel');
+        document.getElementById('confirm-title').textContent = title;
+        document.getElementById('confirm-message').textContent = message;
+        const okBtn = document.getElementById('confirm-ok');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        okBtn.textContent = okLabel;
+        cancelBtn.textContent = cancelLabel;
+        okBtn.className = destructive ? 'modal-ok-red' : 'modal-ok-blue';
         function cleanup() {
           modal.hidden = true;
           okBtn.removeEventListener('click', onOk);
           cancelBtn.removeEventListener('click', onCancel);
         }
-        function onOk() { cleanup(); resolve(true); }
+        function onOk()     { cleanup(); resolve(true);  }
         function onCancel() { cleanup(); resolve(false); }
         okBtn.addEventListener('click', onOk);
         cancelBtn.addEventListener('click', onCancel);
@@ -301,12 +578,37 @@
       });
     }
 
-    function setStatus(cls, text) {
-      statusEl.classList.remove('ok', 'err');
-      if (cls) statusEl.classList.add(cls);
-      statusText.textContent = text;
+    function nameModal({ title = 'Site name', placeholder = 'e.g. Stonegate', initial = '' }) {
+      return new Promise(resolve => {
+        const modal = document.getElementById('name-modal');
+        document.getElementById('name-title').textContent = title;
+        const input = document.getElementById('name-input');
+        input.placeholder = placeholder;
+        input.value = initial;
+        const okBtn = document.getElementById('name-ok');
+        const cancelBtn = document.getElementById('name-cancel');
+        function cleanup() {
+          modal.hidden = true;
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          input.removeEventListener('keydown', onKey);
+        }
+        function onOk() {
+          const v = input.value.trim();
+          if (!v) { input.focus(); return; }
+          cleanup(); resolve(v);
+        }
+        function onCancel() { cleanup(); resolve(null); }
+        function onKey(e) { if (e.key === 'Enter') onOk(); else if (e.key === 'Escape') onCancel(); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        input.addEventListener('keydown', onKey);
+        modal.hidden = false;
+        setTimeout(() => input.focus(), 50);
+      });
     }
 
+    /* Counts -------------------------------------------------- */
     function updateCounts() {
       const n = state.pins.filter(p => p.type === 'none').length;
       const e = state.pins.filter(p => p.type === 'evidence').length;
@@ -314,11 +616,110 @@
       countsEl.textContent = `N:${n} E:${e} F:${f}`;
     }
 
+    /* Persistence -------------------------------------------- */
     function save() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       updateCounts();
     }
 
+    /* Geometry ----------------------------------------------- */
+    function pointInPolygon(point, polygon) {
+      // point: [lat, lng], polygon: array of [lat, lng]
+      // Standard ray-casting algorithm; treats lat/lng as planar.
+      if (!polygon || polygon.length < 3) return false;
+      const x = point[1], y = point[0];
+      let inside = false;
+      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const yi = polygon[i][0], xi = polygon[i][1];
+        const yj = polygon[j][0], xj = polygon[j][1];
+        const intersect = ((yi > y) !== (yj > y))
+          && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    function siteIdForCoords(lat, lng, sitesList) {
+      const sites = sitesList || state.sites;
+      for (const s of sites) {
+        if (pointInPolygon([lat, lng], s.polygon)) return s.id;
+      }
+      return null;
+    }
+
+    function reevaluateAllPinSiteIds() {
+      let changed = 0;
+      for (const p of state.pins) {
+        const newId = siteIdForCoords(p.lat, p.lng);
+        if (p.site_id !== newId) { p.site_id = newId; changed++; }
+      }
+      if (changed > 0) save();
+      return changed;
+    }
+
+    /* Returns the closest segment index and projected point for a given latlng */
+    function closestEdge(latlng, polygon) {
+      const lp = map.latLngToContainerPoint(latlng);
+      let bestIdx = -1, bestDist = Infinity, bestPt = null;
+      for (let i = 0; i < polygon.length; i++) {
+        const a = map.latLngToContainerPoint(L.latLng(polygon[i][0], polygon[i][1]));
+        const b = map.latLngToContainerPoint(L.latLng(polygon[(i + 1) % polygon.length][0], polygon[(i + 1) % polygon.length][1]));
+        // Project lp onto segment ab
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 === 0 ? 0 : ((lp.x - a.x) * dx + (lp.y - a.y) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const px = a.x + t * dx, py = a.y + t * dy;
+        const d = Math.hypot(lp.x - px, lp.y - py);
+        if (d < bestDist) {
+          bestDist = d; bestIdx = i;
+          const ll = map.containerPointToLatLng(L.point(px, py));
+          bestPt = [ll.lat, ll.lng];
+        }
+      }
+      return { index: bestIdx, point: bestPt, distance: bestDist };
+    }
+
+    /* Site IDs ----------------------------------------------- */
+    function generateSiteId() {
+      let max = 0;
+      for (const s of state.sites) {
+        const m = /^site_(\d+)$/.exec(s.id);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+      return 'site_' + String(max + 1).padStart(3, '0');
+    }
+
+    /* Site polygon rendering --------------------------------- */
+    const SITE_STYLE = { color: '#a855f7', weight: 2, opacity: 0.9, fillColor: '#a855f7', fillOpacity: 0.08 };
+
+    function renderSitePolygon(site) {
+      const layer = L.polygon(site.polygon, SITE_STYLE);
+      if (state.show_boundaries) layer.addTo(map);
+      sitePolygonLayers.set(site.id, layer);
+    }
+    function removeSitePolygon(siteId) {
+      const layer = sitePolygonLayers.get(siteId);
+      if (layer) {
+        map.removeLayer(layer);
+        sitePolygonLayers.delete(siteId);
+      }
+    }
+    function refreshSitePolygons() {
+      for (const layer of sitePolygonLayers.values()) map.removeLayer(layer);
+      sitePolygonLayers.clear();
+      state.sites.forEach(renderSitePolygon);
+    }
+    function setBoundariesVisible(visible) {
+      state.show_boundaries = !!visible;
+      for (const layer of sitePolygonLayers.values()) {
+        if (visible) layer.addTo(map);
+        else map.removeLayer(layer);
+      }
+      save();
+    }
+
+    /* Pin rendering ------------------------------------------ */
     function pinIcon(type) {
       return L.divIcon({
         className: '',
@@ -330,13 +731,24 @@
     function userIcon() {
       return L.divIcon({
         className: '',
-        html: `<div class="user-pin"></div>`,
-        iconSize: [18, 18], iconAnchor: [9, 9]
+        html: `<div class="user-pin-wrap">
+                 <div class="user-pin-arrow${currentHeading == null ? ' hidden' : ''}"
+                      style="transform: rotate(${currentHeading == null ? 0 : currentHeading}deg);"></div>
+                 <div class="user-pin-dot"></div>
+               </div>`,
+        iconSize: [32, 32], iconAnchor: [16, 16]
       });
+    }
+
+    function siteNameById(id) {
+      if (!id) return null;
+      const s = state.sites.find(x => x.id === id);
+      return s ? s.name : null;
     }
 
     function openPinPopup(marker, pin) {
       const dt = new Date(pin.timestamp).toLocaleString();
+      const siteName = siteNameById(pin.site_id);
       const html = `
         <div class="meta">
           <b>${pin.type.toUpperCase()}</b><br>
@@ -344,6 +756,9 @@
           ${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}${
             pin.accuracy ? ` · ±${Math.round(pin.accuracy)}m` : ''
           }
+          ${siteName
+            ? `<div class="pin-site">Site: ${escapeHtml(siteName)}</div>`
+            : `<div class="pin-site" style="color:#9ca3af">Unsorted</div>`}
         </div>
         <textarea class="pin-note" placeholder="Add a note..."></textarea>
         <button class="save-note">Save note</button>
@@ -364,21 +779,55 @@
       }, 0);
     }
 
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function pinIsVisibleUnderFilter(pin) {
+      if (activeFilter === '__all__') return true;
+      if (activeFilter === '__unsorted__') return pin.site_id == null;
+      return pin.site_id === activeFilter;
+    }
+
     function addPinToMap(pin) {
-      const marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin.type) }).addTo(map);
+      const marker = L.marker([pin.lat, pin.lng], { icon: pinIcon(pin.type) });
       marker.on('click', () => openPinPopup(marker, pin));
+      pinMarkers.set(pin.id, marker);
+      if (pinIsVisibleUnderFilter(pin)) marker.addTo(map);
+    }
+
+    function removePinFromMap(pinId) {
+      const m = pinMarkers.get(pinId);
+      if (m) {
+        map.removeLayer(m);
+        pinMarkers.delete(pinId);
+      }
+    }
+
+    function refreshPinVisibilityForFilter() {
+      for (const pin of state.pins) {
+        const m = pinMarkers.get(pin.id);
+        if (!m) continue;
+        if (pinIsVisibleUnderFilter(pin)) m.addTo(map);
+        else map.removeLayer(m);
+      }
     }
 
     function renderAllPins() {
-      map.eachLayer(layer => {
-        if (layer instanceof L.Marker && layer !== userMarker) map.removeLayer(layer);
-      });
+      for (const m of pinMarkers.values()) map.removeLayer(m);
+      pinMarkers.clear();
       state.pins.forEach(addPinToMap);
     }
 
+    /* Initial render ----------------------------------------- */
+    state.sites.forEach(renderSitePolygon);
     state.pins.forEach(addPinToMap);
     updateCounts();
+    refreshSiteFilter();
 
+    /* GPS ---------------------------------------------------- */
     function haversine(lat1, lng1, lat2, lng2) {
       const R = 6371000;
       const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -407,7 +856,6 @@
       setStatus('ok', `GPS ±${Math.round(accuracy)}m`);
       updateAccuracyUI(accuracy);
 
-      // Record track point if user moved meaningfully (>= 3m)
       const last = state.track[state.track.length - 1];
       if (!last || haversine(last.lat, last.lng, latitude, longitude) >= 3) {
         const pt = { lat: latitude, lng: longitude, t: new Date().toISOString() };
@@ -416,10 +864,7 @@
         save();
       }
     }
-
-    function onPositionError(err) {
-      setStatus('err', `GPS error: ${err.message}`);
-    }
+    function onPositionError(err) { setStatus('err', `GPS error: ${err.message}`); }
 
     if (!navigator.geolocation) {
       setStatus('err', 'GPS not available');
@@ -429,28 +874,87 @@
       });
     }
 
+    /* Compass arrow ----------------------------------------- */
+    function updateUserHeadingUI() {
+      if (!userMarker) return;
+      const el = userMarker.getElement();
+      if (!el) return;
+      const arrow = el.querySelector('.user-pin-arrow');
+      if (!arrow) return;
+      if (currentHeading == null) {
+        arrow.classList.add('hidden');
+      } else {
+        arrow.classList.remove('hidden');
+        arrow.style.transform = `rotate(${currentHeading}deg)`;
+      }
+    }
+
+    function attachOrientation() {
+      window.addEventListener('deviceorientation', (e) => {
+        let h = null;
+        if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+          h = e.webkitCompassHeading;     // iOS, already 0..360 from north
+        } else if (e.absolute === true && typeof e.alpha === 'number') {
+          h = (360 - e.alpha) % 360;
+        } else if (typeof e.alpha === 'number') {
+          h = (360 - e.alpha) % 360;       // best effort
+        }
+        if (h == null || isNaN(h)) return;
+        currentHeading = h;
+        updateUserHeadingUI();
+      }, { passive: true });
+    }
+
+    async function ensureOrientationPermission() {
+      if (orientationRequested) return;
+      orientationRequested = true;
+      try {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const r = await DeviceOrientationEvent.requestPermission();
+          if (r === 'granted') attachOrientation();
+        } else if (typeof DeviceOrientationEvent !== 'undefined') {
+          attachOrientation();
+        }
+      } catch (_) { /* ignore — fallback is no arrow */ }
+    }
+
+    /* Pin drop --------------------------------------------- */
+    function confirmPoorGPS(accuracy) {
+      return confirmModal({
+        title: 'Poor GPS signal',
+        message: `GPS accuracy is low (${Math.round(accuracy)}m). Pin location may be unreliable. Drop pin anyway?`,
+        okLabel: 'Drop pin',
+        cancelLabel: 'Cancel',
+        destructive: true
+      });
+    }
+
     document.querySelectorAll('#buttons button').forEach(btn => {
       btn.addEventListener('click', async () => {
+        ensureOrientationPermission();   // first user gesture — ask for compass perm
         if (!currentPosition) {
           setStatus('err', 'Waiting for GPS fix…');
           return;
         }
+        if (drawMode || editMode) return; // pin drop disabled while drawing/editing
+
         const type = btn.dataset.type;
         const acc = currentPosition.accuracy;
-
         if (acc != null && isFinite(acc) && acc > 100) {
           const ok = await confirmPoorGPS(acc);
           if (!ok) return;
         }
 
+        const lat = currentPosition.lat, lng = currentPosition.lng;
         const pin = {
           id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
           type,
-          lat: currentPosition.lat,
-          lng: currentPosition.lng,
+          lat, lng,
           accuracy: currentPosition.accuracy,
           timestamp: new Date().toISOString(),
-          note: ''
+          note: '',
+          site_id: siteIdForCoords(lat, lng)
         };
         state.pins.push(pin);
         save();
@@ -458,29 +962,49 @@
       });
     });
 
-    document.getElementById('clear-btn').addEventListener('click', () => {
-      const n = state.pins.length, t = state.track.length;
-      if (!confirm(`Clear survey? This will delete ${n} pin(s) and ${t} track point(s). This cannot be undone.`)) return;
+    /* Clear -------------------------------------------------- */
+    document.getElementById('clear-btn').addEventListener('click', async () => {
+      if (drawMode || editMode) return;
+      const n = state.pins.length, t = state.track.length, s = state.sites.length;
+      const ok = await confirmModal({
+        title: 'Clear survey?',
+        message: `This will delete ${n} pin(s), ${t} track point(s), and ${s} site(s). This cannot be undone.`,
+        okLabel: 'Clear all',
+        cancelLabel: 'Cancel',
+        destructive: true
+      });
+      if (!ok) return;
       state = {
-        version: 1,
+        version: 2,
         started: new Date().toISOString(),
         pins: [],
-        track: []
+        track: [],
+        sites: [],
+        show_boundaries: state.show_boundaries
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      map.eachLayer(layer => {
-        if (layer instanceof L.Marker && layer !== userMarker) map.removeLayer(layer);
-      });
+      for (const m of pinMarkers.values()) map.removeLayer(m);
+      pinMarkers.clear();
       trackLine.setLatLngs([]);
+      refreshSitePolygons();
+      refreshSiteFilter();
       updateCounts();
     });
 
+    /* Export ------------------------------------------------- */
     document.getElementById('export-btn').addEventListener('click', async () => {
+      if (drawMode || editMode) return;
       const payload = {
-        ...state,
+        version: 2,
+        started: state.started,
         username,
-        pins: state.pins.map(p => ({ ...p, created_by: p.created_by || username })),
+        pins: state.pins.map(p => ({
+          ...p,
+          created_by: p.created_by || username,
+          site_id: ('site_id' in p) ? p.site_id : null
+        })),
         track: state.track.map(t => ({ ...t, created_by: t.created_by || username })),
+        sites: state.sites.map(s => ({ ...s })),
         exported_at: new Date().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -507,7 +1031,9 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
 
+    /* Import ------------------------------------------------- */
     document.getElementById('import-btn').addEventListener('click', () => {
+      if (drawMode || editMode) return;
       document.getElementById('import-file').click();
     });
 
@@ -538,36 +1064,616 @@
 
       const importedPins = Array.isArray(imported.pins) ? imported.pins : [];
       const importedTracks = Array.isArray(imported.track) ? imported.track : [];
+      const importedSites = Array.isArray(imported.sites) ? imported.sites : [];
 
-      if (!confirm(`Import ${importedPins.length} pins and ${importedTracks.length} tracks from ${sourceUsername}?`)) return;
+      const ok = await confirmModal({
+        title: `Import from ${sourceUsername}?`,
+        message: `Import ${importedPins.length} pin(s), ${importedTracks.length} track point(s), and ${importedSites.length} site(s)?`,
+        okLabel: 'Import',
+        cancelLabel: 'Cancel',
+        destructive: false
+      });
+      if (!ok) return;
 
+      /* Snapshot the current user's pre-import sites — pins
+         will be checked against THESE polygons (not the imported ones). */
+      const currentSitesSnapshot = state.sites.slice();
+
+      /* Site ID remap: incoming site IDs get prefixed with sourceUsername */
+      const siteIdMap = new Map();   // imported.id -> tagged.id
+      for (const s of importedSites) {
+        const newId = `${sourceUsername}_${s.id}`;
+        siteIdMap.set(s.id, newId);
+      }
+
+      /* Pin import with site_id override logic */
       const pinIndex = new Map(state.pins.map((p, i) => [p.id, i]));
       for (const p of importedPins) {
         const newId = `${sourceUsername}_${p.id}`;
-        const tagged = { ...p, id: newId, created_by: p.created_by || sourceUsername };
-        if (pinIndex.has(newId)) {
-          state.pins[pinIndex.get(newId)] = tagged;
-        } else {
-          pinIndex.set(newId, state.pins.length);
-          state.pins.push(tagged);
-        }
+        const importedSiteId = (p && 'site_id' in p) ? p.site_id : null;
+        const importedSiteIdRemapped = importedSiteId ? (siteIdMap.get(importedSiteId) || `${sourceUsername}_${importedSiteId}`) : null;
+        /* Auto-associate to current user's site if pin falls within one */
+        const currentSiteMatch = (p && typeof p.lat === 'number' && typeof p.lng === 'number')
+          ? siteIdForCoords(p.lat, p.lng, currentSitesSnapshot)
+          : null;
+        const finalSiteId = currentSiteMatch != null ? currentSiteMatch : importedSiteIdRemapped;
+        const tagged = {
+          ...p,
+          id: newId,
+          created_by: p.created_by || sourceUsername,
+          site_id: finalSiteId
+        };
+        if (pinIndex.has(newId)) state.pins[pinIndex.get(newId)] = tagged;
+        else { pinIndex.set(newId, state.pins.length); state.pins.push(tagged); }
       }
 
+      /* Track import (unchanged behaviour, dedupe by created_by + timestamp) */
       const trackKey = (t) => `${t.created_by || ''}|${t.t || ''}`;
       const trackSeen = new Set(state.track.map(trackKey));
       for (const t of importedTracks) {
         const tagged = { ...t, created_by: t.created_by || sourceUsername };
         const key = trackKey(tagged);
-        if (!trackSeen.has(key)) {
-          trackSeen.add(key);
-          state.track.push(tagged);
-        }
+        if (!trackSeen.has(key)) { trackSeen.add(key); state.track.push(tagged); }
+      }
+
+      /* Site import — remap IDs, append (skip if already present) */
+      const existingSiteIds = new Set(state.sites.map(s => s.id));
+      let importedSiteCount = 0;
+      for (const s of importedSites) {
+        const newId = siteIdMap.get(s.id);
+        if (existingSiteIds.has(newId)) continue;
+        const tagged = {
+          ...s,
+          id: newId,
+          created_by: s.created_by || sourceUsername,
+          notes: typeof s.notes === 'string' ? s.notes : '',
+          polygon: Array.isArray(s.polygon) ? s.polygon : []
+        };
+        state.sites.push(tagged);
+        renderSitePolygon(tagged);
+        importedSiteCount++;
       }
 
       save();
       renderAllPins();
-      alert(`Imported ${importedPins.length} pins and ${importedTracks.length} tracks from ${sourceUsername}.`);
+      refreshSiteFilter();
+      alert(`Imported ${importedPins.length} pin(s), ${importedTracks.length} track point(s), and ${importedSiteCount} site(s) from ${sourceUsername}.`);
     });
+
+    /* Filter dropdown -------------------------------------- */
+    function refreshSiteFilter() {
+      const prev = activeFilter;
+      filterEl.innerHTML = '';
+      const optAll = document.createElement('option');
+      optAll.value = '__all__'; optAll.textContent = 'All Sites';
+      filterEl.appendChild(optAll);
+      for (const s of state.sites) {
+        const opt = document.createElement('option');
+        opt.value = s.id; opt.textContent = s.name;
+        filterEl.appendChild(opt);
+      }
+      const optUns = document.createElement('option');
+      optUns.value = '__unsorted__'; optUns.textContent = 'Unsorted';
+      filterEl.appendChild(optUns);
+      /* Restore previous selection if still valid */
+      if (prev === '__all__' || prev === '__unsorted__' || state.sites.find(s => s.id === prev)) {
+        filterEl.value = prev;
+      } else {
+        filterEl.value = '__all__';
+        activeFilter = '__all__';
+      }
+    }
+    filterEl.addEventListener('change', () => {
+      activeFilter = filterEl.value;
+      refreshPinVisibilityForFilter();
+    });
+
+    /* Sites panel ------------------------------------------ */
+    function showPanel() { panelEl.hidden = false; }
+    function hidePanel() { panelEl.hidden = true; panelCardEl.innerHTML = ''; }
+    document.getElementById('sites-btn').addEventListener('click', () => {
+      if (drawMode || editMode) return;
+      renderSitesList();
+      showPanel();
+    });
+
+    function pinCountForSite(siteId) {
+      return state.pins.filter(p => p.site_id === siteId).length;
+    }
+    function unsortedPinCount() {
+      return state.pins.filter(p => p.site_id == null).length;
+    }
+
+    function renderSitesList() {
+      const listHtml = state.sites.map(s =>
+        `<div class="site-row" data-site-id="${escapeHtml(s.id)}">
+           <span class="site-name">${escapeHtml(s.name)}</span>
+           <span class="site-count">${pinCountForSite(s.id)} pin${pinCountForSite(s.id) === 1 ? '' : 's'}</span>
+         </div>`
+      ).join('');
+      panelCardEl.innerHTML = `
+        <div class="panel-header">
+          <div class="panel-title">Sites</div>
+          <button class="panel-close" type="button" id="panel-close">Close</button>
+        </div>
+        <button class="new-site-btn" type="button" id="new-site-btn">+ New Site</button>
+        <div class="panel-section" id="site-list">
+          ${listHtml || '<div style="color:#6b7280;font-size:13px;padding:8px 0;">No sites yet. Tap "+ New Site" to draw one.</div>'}
+          <div class="site-row unsorted" data-site-id="__unsorted__">
+            <span class="site-name">Unsorted</span>
+            <span class="site-count">${unsortedPinCount()} pin${unsortedPinCount() === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="panel-section">
+          <label class="panel-toggle">
+            <span>Show site boundaries on map</span>
+            <input type="checkbox" id="boundary-toggle" ${state.show_boundaries ? 'checked' : ''}>
+          </label>
+        </div>
+      `;
+      document.getElementById('panel-close').addEventListener('click', hidePanel);
+      document.getElementById('new-site-btn').addEventListener('click', () => {
+        hidePanel();
+        startDrawMode();
+      });
+      document.getElementById('boundary-toggle').addEventListener('change', (e) => {
+        setBoundariesVisible(e.target.checked);
+      });
+      panelCardEl.querySelectorAll('.site-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const id = row.dataset.siteId;
+          if (id === '__unsorted__') renderUnsortedList();
+          else renderSiteDetail(id);
+        });
+      });
+    }
+
+    function renderSiteDetail(siteId) {
+      const s = state.sites.find(x => x.id === siteId);
+      if (!s) { renderSitesList(); return; }
+      const findCount     = state.pins.filter(p => p.site_id === siteId && p.type === 'find').length;
+      const evidenceCount = state.pins.filter(p => p.site_id === siteId && p.type === 'evidence').length;
+      const noneCount     = state.pins.filter(p => p.site_id === siteId && p.type === 'none').length;
+
+      panelCardEl.innerHTML = `
+        <div class="panel-header">
+          <button class="panel-close" type="button" id="panel-back">← Back</button>
+          <button class="panel-close" type="button" id="panel-close">Close</button>
+        </div>
+        <div class="detail-name" contenteditable="true" id="detail-name">${escapeHtml(s.name)}</div>
+        <div class="detail-stat">
+          ${findCount} find pin${findCount===1?'':'s'},
+          ${evidenceCount} evidence pin${evidenceCount===1?'':'s'},
+          ${noneCount} no-evidence pin${noneCount===1?'':'s'}
+        </div>
+        <div class="detail-notes-label">Notes</div>
+        <textarea class="detail-notes" id="detail-notes" placeholder="Site history, context, observations…">${escapeHtml(s.notes || '')}</textarea>
+        <div class="detail-actions">
+          <button class="act-view"   type="button" id="act-view">View on Map</button>
+          <button class="act-edit"   type="button" id="act-edit">Edit Boundary</button>
+          <button class="act-delete" type="button" id="act-delete">Delete Site</button>
+        </div>
+      `;
+      document.getElementById('panel-back').addEventListener('click', renderSitesList);
+      document.getElementById('panel-close').addEventListener('click', hidePanel);
+
+      const nameEl = document.getElementById('detail-name');
+      nameEl.addEventListener('blur', () => {
+        const v = nameEl.textContent.trim();
+        if (v && v !== s.name) {
+          s.name = v;
+          s.updated_at = new Date().toISOString();
+          save();
+          refreshSiteFilter();
+        } else if (!v) {
+          nameEl.textContent = s.name; // reject empty
+        }
+      });
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      });
+
+      const notesEl = document.getElementById('detail-notes');
+      notesEl.addEventListener('blur', () => {
+        const v = notesEl.value;
+        if (v !== (s.notes || '')) {
+          s.notes = v;
+          s.updated_at = new Date().toISOString();
+          save();
+        }
+      });
+
+      document.getElementById('act-view').addEventListener('click', () => {
+        hidePanel();
+        const layer = sitePolygonLayers.get(s.id);
+        if (layer) {
+          map.fitBounds(layer.getBounds(), { padding: [40, 40] });
+        } else {
+          /* Fallback: build temp bounds from polygon coords */
+          const tmp = L.polygon(s.polygon);
+          map.fitBounds(tmp.getBounds(), { padding: [40, 40] });
+        }
+      });
+      document.getElementById('act-edit').addEventListener('click', () => {
+        hidePanel();
+        startEditMode(s.id);
+      });
+      document.getElementById('act-delete').addEventListener('click', async () => {
+        const ok = await confirmModal({
+          title: `Delete site ${s.name}?`,
+          message: `Pins will move to Unsorted. This cannot be undone.`,
+          okLabel: 'Delete',
+          cancelLabel: 'Cancel',
+          destructive: true
+        });
+        if (!ok) return;
+        deleteSite(s.id);
+        renderSitesList();
+      });
+    }
+
+    function renderUnsortedList() {
+      const unsorted = state.pins.filter(p => p.site_id == null);
+      const rowHtml = unsorted.map(p => {
+        const dt = new Date(p.timestamp).toLocaleString();
+        return `<div class="unsorted-pin-row" data-pin-id="${escapeHtml(p.id)}">
+                  <div class="unsorted-pin-info">
+                    <span class="unsorted-pin-type ${p.type}">${p.type}</span>
+                    <span class="unsorted-pin-time">${escapeHtml(dt)} · ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span>
+                  </div>
+                  <button class="move-btn" type="button">Move to…</button>
+                </div>`;
+      }).join('');
+      panelCardEl.innerHTML = `
+        <div class="panel-header">
+          <button class="panel-close" type="button" id="panel-back">← Back</button>
+          <button class="panel-close" type="button" id="panel-close">Close</button>
+        </div>
+        <div class="panel-title">Unsorted Pins (${unsorted.length})</div>
+        <div class="panel-section">
+          ${rowHtml || '<div style="color:#6b7280;font-size:13px;padding:8px 0;">No unsorted pins.</div>'}
+        </div>
+      `;
+      document.getElementById('panel-back').addEventListener('click', renderSitesList);
+      document.getElementById('panel-close').addEventListener('click', hidePanel);
+      panelCardEl.querySelectorAll('.unsorted-pin-row').forEach(row => {
+        const moveBtn = row.querySelector('.move-btn');
+        moveBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const pinId = row.dataset.pinId;
+          const pickedSiteId = await pickSiteModal();
+          if (pickedSiteId == null) return;
+          const pin = state.pins.find(p => p.id === pinId);
+          if (!pin) return;
+          pin.site_id = pickedSiteId;
+          save();
+          renderUnsortedList();
+          refreshPinVisibilityForFilter();
+        });
+      });
+    }
+
+    /* "Move to..." picker — small inline modal using confirm-modal layout */
+    function pickSiteModal() {
+      return new Promise(resolve => {
+        if (state.sites.length === 0) {
+          alert('Create a site first before assigning pins.');
+          resolve(null);
+          return;
+        }
+        const modal = document.getElementById('confirm-modal');
+        const card = modal.querySelector('.modal-card');
+        const oldHtml = card.innerHTML;
+        card.innerHTML = `
+          <div class="modal-title">Move pin to…</div>
+          <div class="modal-message">Choose a site for this pin.</div>
+          <div id="pick-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:240px;overflow-y:auto;">
+            ${state.sites.map(s =>
+              `<button class="modal-cancel" type="button" data-site-id="${escapeHtml(s.id)}" style="padding:10px;text-align:left;">${escapeHtml(s.name)}</button>`
+            ).join('')}
+          </div>
+          <div class="modal-buttons">
+            <button class="modal-cancel" type="button" id="pick-cancel">Cancel</button>
+          </div>
+        `;
+        function cleanup(val) {
+          card.innerHTML = oldHtml;
+          modal.hidden = true;
+          resolve(val);
+        }
+        card.querySelectorAll('[data-site-id]').forEach(b => {
+          b.addEventListener('click', () => cleanup(b.dataset.siteId));
+        });
+        document.getElementById('pick-cancel').addEventListener('click', () => cleanup(null));
+        modal.hidden = false;
+      });
+    }
+
+    /* Delete site ------------------------------------------ */
+    function deleteSite(siteId) {
+      const idx = state.sites.findIndex(s => s.id === siteId);
+      if (idx === -1) return;
+      state.sites.splice(idx, 1);
+      removeSitePolygon(siteId);
+      /* Pins inside that site go to Unsorted unless another polygon contains them */
+      for (const p of state.pins) {
+        if (p.site_id === siteId) {
+          p.site_id = siteIdForCoords(p.lat, p.lng);
+        }
+      }
+      save();
+      refreshSiteFilter();
+      refreshPinVisibilityForFilter();
+    }
+
+    /* Polygon DRAW mode ----------------------------------- */
+    function startDrawMode(replacingSiteId) {
+      if (drawMode || editMode) return;
+      drawMode = {
+        points: [],
+        pointMarkers: [],
+        lineLayer: null,
+        replacingSiteId: replacingSiteId || null
+      };
+      drawHud.hidden = false;
+      filterBarEl.style.display = 'none';
+      buttonsBarEl.style.display = 'none';
+      drawHudText.textContent = 'Tap to add boundary points. Tap the first point to close the polygon.';
+      map.on('click', onDrawMapClick);
+    }
+
+    function endDrawMode() {
+      if (!drawMode) return;
+      map.off('click', onDrawMapClick);
+      for (const m of drawMode.pointMarkers) map.removeLayer(m);
+      if (drawMode.lineLayer) map.removeLayer(drawMode.lineLayer);
+      drawMode = null;
+      drawHud.hidden = true;
+      filterBarEl.style.display = '';
+      buttonsBarEl.style.display = '';
+    }
+
+    function drawPointIcon(isFirst) {
+      return L.divIcon({
+        className: '',
+        html: `<div class="draw-point${isFirst ? ' first' : ''}"></div>`,
+        iconSize: [12, 12], iconAnchor: [6, 6]
+      });
+    }
+
+    function onDrawMapClick(e) {
+      if (!drawMode) return;
+      const ll = e.latlng;
+      const pt = [ll.lat, ll.lng];
+
+      /* Closing tap: if we have ≥3 points and tap is near the first point */
+      if (drawMode.points.length >= 3) {
+        const firstPx = map.latLngToContainerPoint(L.latLng(drawMode.points[0][0], drawMode.points[0][1]));
+        const tapPx = map.latLngToContainerPoint(ll);
+        const dist = firstPx.distanceTo(tapPx);
+        if (dist <= 20) {
+          finalizeDrawnPolygon();
+          return;
+        }
+      }
+
+      drawMode.points.push(pt);
+      const isFirst = drawMode.points.length === 1;
+      const m = L.marker(ll, { icon: drawPointIcon(isFirst), interactive: false }).addTo(map);
+      drawMode.pointMarkers.push(m);
+
+      if (!drawMode.lineLayer) {
+        drawMode.lineLayer = L.polyline(drawMode.points, { color: '#a855f7', weight: 2, dashArray: '6,4' }).addTo(map);
+      } else {
+        drawMode.lineLayer.setLatLngs(drawMode.points);
+      }
+      if (drawMode.points.length < 3) {
+        drawHudText.textContent = `${drawMode.points.length} point${drawMode.points.length===1?'':'s'} placed. ${3 - drawMode.points.length} more needed.`;
+      } else {
+        drawHudText.textContent = `${drawMode.points.length} points placed. Tap the first point to close.`;
+      }
+    }
+
+    async function finalizeDrawnPolygon() {
+      const points = drawMode.points.slice();
+      const replacingSiteId = drawMode.replacingSiteId;
+      const presetName = drawMode.presetName || null;
+      endDrawMode();
+
+      if (replacingSiteId) {
+        /* "Erase and Restart" path during edit — apply to the existing site */
+        const s = state.sites.find(x => x.id === replacingSiteId);
+        if (!s) return;
+        s.polygon = points;
+        s.updated_at = new Date().toISOString();
+        removeSitePolygon(s.id);
+        renderSitePolygon(s);
+        reevaluateAllPinSiteIds();
+        save();
+        refreshSiteFilter();
+        refreshPinVisibilityForFilter();
+        renderSiteDetail(s.id);
+        showPanel();
+        return;
+      }
+
+      const name = presetName || await nameModal({
+        title: 'Name this site',
+        placeholder: 'e.g. Stonegate'
+      });
+      if (!name) return; /* user cancelled — polygon discarded */
+
+      const now = new Date().toISOString();
+      const site = {
+        id: generateSiteId(),
+        name,
+        polygon: points,
+        notes: '',
+        created_by: username,
+        created_at: now,
+        updated_at: now
+      };
+      state.sites.push(site);
+      renderSitePolygon(site);
+      reevaluateAllPinSiteIds();
+      save();
+      refreshSiteFilter();
+      refreshPinVisibilityForFilter();
+    }
+
+    document.getElementById('draw-cancel').addEventListener('click', () => {
+      endDrawMode();
+    });
+    document.getElementById('draw-restart').addEventListener('click', () => {
+      const replacing = drawMode ? drawMode.replacingSiteId : null;
+      const presetName = drawMode ? drawMode.presetName : null;
+      endDrawMode();
+      startDrawMode(replacing);
+      if (drawMode && presetName) drawMode.presetName = presetName;
+    });
+
+    /* Polygon EDIT mode ----------------------------------- */
+    function startEditMode(siteId) {
+      if (drawMode || editMode) return;
+      const s = state.sites.find(x => x.id === siteId);
+      if (!s) return;
+      editMode = {
+        siteId,
+        originalPolygon: s.polygon.map(p => p.slice()),
+        vertexMarkers: [],
+        polygonLayer: null,
+        longPressTimer: null
+      };
+      editHud.hidden = false;
+      filterBarEl.style.display = 'none';
+      buttonsBarEl.style.display = 'none';
+      removeSitePolygon(siteId);
+      editMode.polygonLayer = L.polygon(s.polygon, SITE_STYLE).addTo(map);
+      editMode.polygonLayer.on('click', onEditPolygonClick);
+      rebuildVertexHandles();
+      map.fitBounds(editMode.polygonLayer.getBounds(), { padding: [60, 60] });
+    }
+
+    function rebuildVertexHandles() {
+      if (!editMode) return;
+      const s = state.sites.find(x => x.id === editMode.siteId);
+      if (!s) return;
+      for (const m of editMode.vertexMarkers) map.removeLayer(m);
+      editMode.vertexMarkers = [];
+      s.polygon.forEach((pt, idx) => {
+        const m = L.marker(pt, {
+          icon: L.divIcon({
+            className: '',
+            html: `<div class="vertex-handle"></div>`,
+            iconSize: [18, 18], iconAnchor: [9, 9]
+          }),
+          draggable: true,
+          zIndexOffset: 2000
+        }).addTo(map);
+
+        m.on('drag', (e) => {
+          const ll = e.target.getLatLng();
+          s.polygon[idx] = [ll.lat, ll.lng];
+          editMode.polygonLayer.setLatLngs(s.polygon);
+        });
+
+        /* Long-press to delete */
+        function startLongPress() {
+          if (editMode.longPressTimer) clearTimeout(editMode.longPressTimer);
+          editMode.longPressTimer = setTimeout(() => {
+            if (s.polygon.length <= 3) {
+              alert('A polygon needs at least 3 corners.');
+              return;
+            }
+            s.polygon.splice(idx, 1);
+            editMode.polygonLayer.setLatLngs(s.polygon);
+            rebuildVertexHandles();
+          }, 600);
+        }
+        function cancelLongPress() {
+          if (editMode.longPressTimer) { clearTimeout(editMode.longPressTimer); editMode.longPressTimer = null; }
+        }
+        m.on('mousedown',  startLongPress);
+        m.on('touchstart', startLongPress);
+        m.on('mouseup',    cancelLongPress);
+        m.on('touchend',   cancelLongPress);
+        m.on('drag',       cancelLongPress);
+
+        editMode.vertexMarkers.push(m);
+      });
+    }
+
+    function onEditPolygonClick(e) {
+      if (!editMode) return;
+      const s = state.sites.find(x => x.id === editMode.siteId);
+      if (!s) return;
+      const result = closestEdge(e.latlng, s.polygon);
+      /* Only insert if the click landed within ~20 px of an edge */
+      if (result.distance <= 20 && result.point) {
+        const insertAt = result.index + 1;
+        s.polygon.splice(insertAt, 0, result.point);
+        editMode.polygonLayer.setLatLngs(s.polygon);
+        rebuildVertexHandles();
+      }
+    }
+
+    function endEditMode() {
+      if (!editMode) return;
+      for (const m of editMode.vertexMarkers) map.removeLayer(m);
+      if (editMode.polygonLayer) map.removeLayer(editMode.polygonLayer);
+      const siteId = editMode.siteId;
+      editMode = null;
+      editHud.hidden = true;
+      filterBarEl.style.display = '';
+      buttonsBarEl.style.display = '';
+      const s = state.sites.find(x => x.id === siteId);
+      if (s) renderSitePolygon(s);
+    }
+
+    document.getElementById('edit-save').addEventListener('click', () => {
+      if (!editMode) return;
+      const s = state.sites.find(x => x.id === editMode.siteId);
+      if (!s) { endEditMode(); return; }
+      s.updated_at = new Date().toISOString();
+      const siteId = s.id;
+      endEditMode();
+      reevaluateAllPinSiteIds();
+      save();
+      refreshSiteFilter();
+      refreshPinVisibilityForFilter();
+      renderSiteDetail(siteId);
+      showPanel();
+    });
+    document.getElementById('edit-cancel').addEventListener('click', () => {
+      if (!editMode) return;
+      const s = state.sites.find(x => x.id === editMode.siteId);
+      if (s) s.polygon = editMode.originalPolygon;
+      const siteId = editMode.siteId;
+      endEditMode();
+      renderSiteDetail(siteId);
+      showPanel();
+    });
+    document.getElementById('edit-restart').addEventListener('click', () => {
+      if (!editMode) return;
+      const siteId = editMode.siteId;
+      const s = state.sites.find(x => x.id === siteId);
+      if (!s) { endEditMode(); return; }
+      /* Restore original polygon to state, then exit edit mode and start fresh draw */
+      s.polygon = editMode.originalPolygon;
+      endEditMode();
+      /* Begin a fresh draw — outcome will overwrite the site's polygon */
+      startDrawMode(siteId);
+    });
+
+    /* Suppress map click while drawing/editing for stray accidental fires */
+    map.on('click', (e) => {
+      /* The dedicated handlers (onDrawMapClick / onEditPolygonClick) already run.
+         No extra logic needed here, but kept for clarity. */
+    });
+
+    /* Initial state once orientation perm available */
+    /* (compass perm is requested on first pin button tap; see ensureOrientationPermission) */
+
   </script>
 </body>
 </html>
