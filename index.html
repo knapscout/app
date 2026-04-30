@@ -629,9 +629,10 @@
 
     /* Counts -------------------------------------------------- */
     function updateCounts() {
-      const n = state.pins.filter(p => p.type === 'none').length;
-      const e = state.pins.filter(p => p.type === 'evidence').length;
-      const f = state.pins.filter(p => p.type === 'find').length;
+      const visible = state.pins.filter(pinIsVisibleUnderFilter);
+      const n = visible.filter(p => p.type === 'none').length;
+      const e = visible.filter(p => p.type === 'evidence').length;
+      const f = visible.filter(p => p.type === 'find').length;
       countsEl.textContent = `N:${n} E:${e} F:${f}`;
     }
 
@@ -1207,6 +1208,7 @@
     filterEl.addEventListener('change', () => {
       activeFilter = filterEl.value;
       refreshPinVisibilityForFilter();
+      updateCounts();
     });
 
     /* Sites panel ------------------------------------------ */
