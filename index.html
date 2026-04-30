@@ -179,6 +179,15 @@
       font-size: 13px; font-weight: 600; color: #374151;
     }
     .panel-toggle input { width: 18px; height: 18px; }
+    .compass-reenable-btn {
+      width: 100%; margin-top: 6px;
+      padding: 10px 12px;
+      background: #f3f4f6; color: #374151;
+      border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer;
+    }
+    .compass-reenable-btn:active { background: #e5e7eb; }
 
     .site-row {
       display: flex; justify-content: space-between; align-items: center;
@@ -928,21 +937,40 @@
     }
 
     /* Compass onboarding ----------------------------------- */
-    async function handleCompassOnboardingClick() {
-      const modal = document.getElementById('compass-onboarding');
-      try {
-        if (typeof DeviceOrientationEvent !== 'undefined' &&
-            typeof DeviceOrientationEvent.requestPermission === 'function') {
-          /* iOS 13+ — must run inside this user-gesture handler */
+    async function requestCompassPermissionInteractive() {
+      /* Returns 'granted' | 'denied' | 'unsupported'.
+         MUST be called from within a user-gesture handler (iOS requirement). */
+      if (typeof DeviceOrientationEvent === 'undefined') return 'unsupported';
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
           const r = await DeviceOrientationEvent.requestPermission();
-          if (r === 'granted') attachOrientation();
-        } else if (typeof DeviceOrientationEvent !== 'undefined') {
-          /* Android / desktop — no permission needed */
-          attachOrientation();
+          if (r === 'granted') { attachOrientation(); return 'granted'; }
+          return 'denied';
+        } catch (_) {
+          return 'denied';
         }
-      } catch (_) { /* fallback: no cone */ }
+      }
+      /* Android / desktop — no permission API; attach silently */
+      attachOrientation();
+      return 'granted';
+    }
+
+    async function handleCompassOnboardingClick() {
+      await requestCompassPermissionInteractive();
       localStorage.setItem(COMPASS_ASKED_KEY, '1');
-      modal.hidden = true;
+      document.getElementById('compass-onboarding').hidden = true;
+    }
+
+    async function reEnableCompass() {
+      /* Clear the "asked" flag so the underlying state mirrors a first launch,
+         then run the same permission flow as onboarding. The user gesture is
+         the button tap that called us — required for iOS requestPermission. */
+      localStorage.removeItem(COMPASS_ASKED_KEY);
+      const result = await requestCompassPermissionInteractive();
+      localStorage.setItem(COMPASS_ASKED_KEY, '1');
+      if (result === 'granted')      alert('Compass enabled');
+      else if (result === 'denied')  alert('Compass permission denied');
+      else                           alert('Compass not supported on this device');
     }
 
     function initCompass() {
@@ -1252,6 +1280,7 @@
             <span>Show site boundaries on map</span>
             <input type="checkbox" id="boundary-toggle" ${state.show_boundaries ? 'checked' : ''}>
           </label>
+          <button class="compass-reenable-btn" type="button" id="compass-reenable-btn">Re-enable Compass</button>
         </div>
       `;
       document.getElementById('panel-close').addEventListener('click', hidePanel);
@@ -1262,6 +1291,7 @@
       document.getElementById('boundary-toggle').addEventListener('change', (e) => {
         setBoundariesVisible(e.target.checked);
       });
+      document.getElementById('compass-reenable-btn').addEventListener('click', reEnableCompass);
       panelCardEl.querySelectorAll('.site-row').forEach(row => {
         row.addEventListener('click', () => {
           const id = row.dataset.siteId;
