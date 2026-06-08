@@ -462,6 +462,19 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
           crossorigin=""></script>
+  <!-- Supabase client (Bite 4) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // --- KnapScout cloud connection (Bite 4) ---
+    // Publishable/anon key only. Safe in client code; protected by RLS.
+    // The secret key NEVER goes here.
+    const SUPABASE_URL = 'https://rgyeyzlwdlqiwlfgbxle.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_DNuhW2ZSTpz4jU-BV-mtYw_9uzCT-RO';
+
+    // The CDN library exposes a global called `supabase`.
+    // We create our own client and call it `sb`.
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  </script>
   <script>
     /* ------------------------------------------------------------
        KnapScout — Bite 3: site structure
