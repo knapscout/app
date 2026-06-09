@@ -12,6 +12,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="KnapScout">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IM+Fell+English+SC&family=JetBrains+Mono:wght@400;700&family=Spectral:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
         crossorigin="">
@@ -1769,5 +1772,37 @@
     initCompass();
 
   </script>
+<div id="ks-splash" role="dialog" aria-label="KnapScout welcome">
+  <div class="ks-wrap">
+    <div class="ks-word">Knap<span class="ks-scout">Scout</span></div>
+    <div class="ks-tag">Field Survey</div>
+    <img class="ks-kirk" src="art/knapscout-gate-kirk.png" alt="Corner-notched Kirk projectile point">
+    <div class="ks-spec">Corner-Notched Kirk <span class="ks-dot">&middot;</span> Early Archaic</div>
+    <div class="ks-enter">Tap to enter</div>
+  </div>
+</div>
+<style>
+  #ks-splash{position:fixed;inset:0;z-index:99999;background:#EDE3D0;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;transition:opacity .5s ease;-webkit-tap-highlight-color:transparent;}
+  #ks-splash.ks-hide{opacity:0;pointer-events:none;}
+  #ks-splash::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 50% at 18% 12%,rgba(212,197,166,.40),transparent 70%),radial-gradient(55% 45% at 85% 88%,rgba(184,132,42,.10),transparent 70%);}
+  #ks-splash .ks-wrap{position:relative;padding:6vh 1.5rem;display:flex;flex-direction:column;align-items:center;}
+  #ks-splash .ks-word{font-family:'IM Fell English SC','Fraunces',serif;font-size:clamp(2.4rem,9vw,3.6rem);line-height:1;color:#2A231A;}
+  #ks-splash .ks-scout{color:#2F4225;}
+  #ks-splash .ks-tag{margin:.8rem 0 0;font-family:'JetBrains Mono',monospace;font-size:.62rem;text-transform:uppercase;letter-spacing:.32em;color:#8C7C62;}
+  #ks-splash .ks-kirk{height:clamp(220px,46vh,420px);width:auto;margin:clamp(1rem,4vh,2.4rem) 0;filter:drop-shadow(5px 9px 7px rgba(42,35,26,.22));}
+  #ks-splash .ks-spec{font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.26em;color:#8C7C62;}
+  #ks-splash .ks-dot{color:#A0461F;}
+  #ks-splash .ks-enter{margin-top:2.2rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.3em;color:#A0461F;animation:ksPulse 2.2s ease-in-out infinite;}
+  @keyframes ksPulse{0%,100%{opacity:.45;}50%{opacity:1;}}
+</style>
+<script>
+  (function(){
+    var s=document.getElementById('ks-splash');
+    if(!s) return;
+    function dismiss(){ s.classList.add('ks-hide'); setTimeout(function(){ if(s&&s.parentNode){ s.parentNode.removeChild(s); } },600); }
+    s.addEventListener('click', dismiss);
+    s.addEventListener('touchend', function(e){ e.preventDefault(); dismiss(); }, {passive:false});
+  })();
+</script>
 </body>
 </html>
