@@ -18,6 +18,17 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
         crossorigin="">
+  <!-- ksauth: early styles, applied on the very first paint (before the app/map
+       can flash) so the splash covers immediately and the hidden attribute is
+       actually honoured (author display:flex rules otherwise outrank UA [hidden]). -->
+  <style>
+    html, body { background: #EDE3D0; }
+    [hidden] { display: none !important; }
+    /* Splash covers full-screen and opaque from first paint, no JS required. */
+    #ks-splash { position: fixed; inset: 0; z-index: 99999; background: #EDE3D0; }
+    /* Auth panel covers when shown; starts hidden via the hidden attribute above. */
+    #ksauth-panel { position: fixed; inset: 0; z-index: 100000; background: #EDE3D0; }
+  </style>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
@@ -1783,7 +1794,7 @@
     initCompass();
 
   </script>
-<div id="ks-splash" role="dialog" aria-label="KnapScout welcome">
+<div id="ks-splash" role="dialog" aria-label="KnapScout welcome" style="position:fixed;inset:0;z-index:99999;background:#EDE3D0;">
   <div class="ks-wrap">
     <div class="ks-word">Knap<span class="ks-scout">Scout</span></div>
     <div class="ks-tag">Field Survey</div>
@@ -1869,7 +1880,7 @@
 <style>
   #ksauth-panel{position:fixed;inset:0;z-index:100000;background:#EDE3D0;display:flex;align-items:center;justify-content:center;padding:6vh 1.2rem;}
   #ksauth-panel::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 50% at 18% 12%,rgba(212,197,166,.40),transparent 70%),radial-gradient(55% 45% at 85% 88%,rgba(184,132,42,.10),transparent 70%);}
-  #ksauth-panel .ksauth-card{position:relative;width:100%;max-width:340px;display:flex;flex-direction:column;align-items:stretch;text-align:center;}
+  #ksauth-panel .ksauth-card{position:relative;width:100%;max-width:300px;margin:0 auto;display:flex;flex-direction:column;align-items:stretch;text-align:center;}
   #ksauth-panel .ksauth-word{font-family:'IM Fell English SC','Fraunces',serif;font-size:clamp(2rem,8vw,2.8rem);line-height:1;color:#2A231A;}
   #ksauth-panel .ksauth-scout{color:#2F4225;}
   #ksauth-panel .ksauth-tag{margin:.6rem 0 1.8rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.28em;color:#8C7C62;}
