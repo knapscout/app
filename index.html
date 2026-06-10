@@ -34,6 +34,9 @@
     }
     #status .left { display: flex; gap: 8px; align-items: center; min-width: 0; flex: 1; }
     #status .right { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
+    /* ksauth: tiny unobtrusive sign-out text link in the top bar */
+    #ksauth-signout { font-family: 'JetBrains Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .12em; color: #6b7280; cursor: pointer; padding: 2px 4px; white-space: nowrap; }
+    #ksauth-signout:hover { color: #f87171; }
     #status .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
     #status.ok .dot { background: #10b981; }
     #status.err .dot { background: #ef4444; }
@@ -389,6 +392,7 @@
         <button id="import-btn" type="button">Import</button>
         <button id="export-btn" type="button">Export</button>
         <input type="file" id="import-file" accept="application/json,.json" hidden>
+        <span id="ksauth-signout" role="button" tabindex="0" title="Sign out">Sign out</span>
       </div>
     </div>
     <div id="map">
@@ -495,12 +499,19 @@
     const USERNAME_KEY = 'knapscout_username';
 
     let username = localStorage.getItem(USERNAME_KEY);
-    if (username == null) {
-      const entered = prompt("What's your name for KnapScout exports? (e.g. jason, burke)");
-      const cleaned = (entered || '').trim().toLowerCase();
-      username = cleaned || 'user';
-      localStorage.setItem(USERNAME_KEY, username);
+    // ksauth: the username prompt is deferred so the browser prompt() can't pop
+    // over the sign-in panel. Same logic as before, just wrapped in a function
+    // that the reveal path calls once the user is actually entering the app.
+    function ensureUsername() {
+      if (username == null) {
+        const entered = prompt("What's your name for KnapScout exports? (e.g. jason, burke)");
+        const cleaned = (entered || '').trim().toLowerCase();
+        username = cleaned || 'user';
+        localStorage.setItem(USERNAME_KEY, username);
+      }
+      return username;
     }
+    window.ensureUsername = ensureUsername;
 
     /* Load & migrate state. */
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {
@@ -1799,9 +1810,170 @@
   (function(){
     var s=document.getElementById('ks-splash');
     if(!s) return;
+    var busy=false;
     function dismiss(){ s.classList.add('ks-hide'); setTimeout(function(){ if(s&&s.parentNode){ s.parentNode.removeChild(s); } },600); }
-    s.addEventListener('click', dismiss);
-    s.addEventListener('touchend', function(e){ e.preventDefault(); dismiss(); }, {passive:false});
+    // The reveal path: make sure we have a username, then dismiss the splash to
+    // expose the app. Exposed so the sign-in panel can call the SAME path.
+    function reveal(){ if (typeof window.ensureUsername === 'function') { window.ensureUsername(); } dismiss(); }
+    window.ksauthReveal = reveal;
+
+    // On tap: branch on whether a Supabase session already exists.
+    //  - session  -> reveal the app (original behavior)
+    //  - no session -> show the sign-in panel; app stays hidden behind the splash
+    async function onEnter(){
+      if (busy) return; busy = true;
+      try {
+        var res = await sb.auth.getSession();
+        var session = res && res.data && res.data.session;
+        if (session) { reveal(); }
+        else if (typeof window.ksauthShowPanel === 'function') { window.ksauthShowPanel(); }
+        else { reveal(); } // fallback: never trap the user out of the app
+      } catch (e) {
+        if (typeof window.ksauthShowPanel === 'function') { window.ksauthShowPanel(); }
+        else { reveal(); }
+      } finally { busy = false; }
+    }
+    s.addEventListener('click', onEnter);
+    s.addEventListener('touchend', function(e){ e.preventDefault(); onEnter(); }, {passive:false});
+  })();
+</script>
+
+<!-- ksauth: email + 6-digit-code sign-in panel (sits above the splash) -->
+<div id="ksauth-panel" hidden role="dialog" aria-label="Sign in to KnapScout">
+  <div class="ksauth-card">
+    <div class="ksauth-word">Knap<span class="ksauth-scout">Scout</span></div>
+    <div class="ksauth-tag">Field Survey &middot; Sign in</div>
+
+    <!-- Step 1: email -->
+    <div id="ksauth-step-email" class="ksauth-step">
+      <label class="ksauth-label" for="ksauth-email">Email</label>
+      <input id="ksauth-email" class="ksauth-input" type="email" inputmode="email"
+             autocomplete="email" autocapitalize="none" spellcheck="false"
+             placeholder="you@example.com">
+      <button id="ksauth-send" class="ksauth-btn" type="button">Send my code</button>
+    </div>
+
+    <!-- Step 2: code -->
+    <div id="ksauth-step-code" class="ksauth-step" hidden>
+      <label class="ksauth-label" for="ksauth-code">6-digit code</label>
+      <input id="ksauth-code" class="ksauth-input ksauth-code-input" type="text"
+             inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+             placeholder="000000">
+      <button id="ksauth-verify" class="ksauth-btn" type="button">Sign in</button>
+      <div class="ksauth-resend">Didn&rsquo;t get it? <span id="ksauth-resend-link" class="ksauth-link" role="button" tabindex="0">Resend</span></div>
+    </div>
+
+    <div id="ksauth-status" class="ksauth-status" role="status" aria-live="polite"></div>
+  </div>
+</div>
+<style>
+  #ksauth-panel{position:fixed;inset:0;z-index:100000;background:#EDE3D0;display:flex;align-items:center;justify-content:center;padding:6vh 1.2rem;}
+  #ksauth-panel::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 50% at 18% 12%,rgba(212,197,166,.40),transparent 70%),radial-gradient(55% 45% at 85% 88%,rgba(184,132,42,.10),transparent 70%);}
+  #ksauth-panel .ksauth-card{position:relative;width:100%;max-width:340px;display:flex;flex-direction:column;align-items:stretch;text-align:center;}
+  #ksauth-panel .ksauth-word{font-family:'IM Fell English SC','Fraunces',serif;font-size:clamp(2rem,8vw,2.8rem);line-height:1;color:#2A231A;}
+  #ksauth-panel .ksauth-scout{color:#2F4225;}
+  #ksauth-panel .ksauth-tag{margin:.6rem 0 1.8rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.28em;color:#8C7C62;}
+  #ksauth-panel .ksauth-step{display:flex;flex-direction:column;align-items:stretch;}
+  #ksauth-panel .ksauth-label{font-family:'JetBrains Mono',monospace;font-size:.58rem;text-transform:uppercase;letter-spacing:.22em;color:#8C7C62;text-align:left;margin-bottom:.4rem;}
+  #ksauth-panel .ksauth-input{font-family:'JetBrains Mono',monospace;font-size:1rem;color:#2A231A;background:#F6EFE0;border:1.5px solid #C9B68F;border-radius:8px;padding:.7rem .8rem;outline:none;}
+  #ksauth-panel .ksauth-input:focus{border-color:#A0461F;}
+  #ksauth-panel .ksauth-code-input{text-align:center;letter-spacing:.5em;font-size:1.3rem;}
+  #ksauth-panel .ksauth-btn{margin-top:.9rem;font-family:'JetBrains Mono',monospace;font-size:.68rem;text-transform:uppercase;letter-spacing:.18em;color:#EDE3D0;background:#A0461F;border:none;border-radius:8px;padding:.75rem 1rem;cursor:pointer;}
+  #ksauth-panel .ksauth-btn:disabled{opacity:.55;cursor:default;}
+  #ksauth-panel .ksauth-resend{margin-top:.9rem;font-family:'JetBrains Mono',monospace;font-size:.58rem;letter-spacing:.06em;color:#8C7C62;}
+  #ksauth-panel .ksauth-link{color:#A0461F;cursor:pointer;text-decoration:underline;}
+  #ksauth-panel .ksauth-status{min-height:1.1rem;margin-top:1rem;font-family:'JetBrains Mono',monospace;font-size:.6rem;letter-spacing:.04em;color:#8C7C62;}
+  #ksauth-panel .ksauth-status.ksauth-ok{color:#2F4225;}
+  #ksauth-panel .ksauth-status.ksauth-err{color:#A0461F;}
+</style>
+<script>
+  (function(){
+    var panel     = document.getElementById('ksauth-panel');
+    if (!panel) return;
+    var stepEmail = document.getElementById('ksauth-step-email');
+    var stepCode  = document.getElementById('ksauth-step-code');
+    var emailIn   = document.getElementById('ksauth-email');
+    var codeIn    = document.getElementById('ksauth-code');
+    var sendBtn   = document.getElementById('ksauth-send');
+    var verifyBtn = document.getElementById('ksauth-verify');
+    var resendEl  = document.getElementById('ksauth-resend-link');
+    var statusEl  = document.getElementById('ksauth-status');
+    var currentEmail = '';
+
+    function setStatus(msg, kind){
+      statusEl.textContent = msg || '';
+      statusEl.className = 'ksauth-status' + (kind ? ' ksauth-' + kind : '');
+    }
+
+    // Exposed so the splash tap handler can show this when there's no session.
+    window.ksauthShowPanel = function(){
+      panel.hidden = false;
+      stepEmail.hidden = false;
+      stepCode.hidden = true;
+      setStatus('');
+      try { emailIn.focus(); } catch(e){}
+    };
+
+    async function sendCode(){
+      var email = (emailIn.value || '').trim();
+      if (email.indexOf('@') === -1) { setStatus('Enter a valid email address.', 'err'); return; }
+      currentEmail = email;
+      sendBtn.disabled = true; setStatus('Sending…');
+      try {
+        var r = await sb.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true } });
+        if (r && r.error) { setStatus(r.error.message || 'Could not send code.', 'err'); return; }
+        stepEmail.hidden = true; stepCode.hidden = false;
+        setStatus('Check your email for your 6-digit code.', 'ok');
+        try { codeIn.focus(); } catch(e){}
+      } catch (e) {
+        setStatus((e && e.message) || 'Could not send code.', 'err');
+      } finally { sendBtn.disabled = false; }
+    }
+
+    async function verifyCode(){
+      var code = (codeIn.value || '').trim();
+      if (!/^\d{6}$/.test(code)) { setStatus('Code must be 6 digits.', 'err'); return; }
+      verifyBtn.disabled = true; setStatus('Verifying…');
+      try {
+        var r = await sb.auth.verifyOtp({ email: currentEmail, token: code, type: 'email' });
+        if (r && r.error) { setStatus(r.error.message || 'Invalid or expired code.', 'err'); return; }
+        // Success -> hide panel and take the SAME reveal/dismiss path the tap uses.
+        panel.hidden = true;
+        if (typeof window.ksauthReveal === 'function') { window.ksauthReveal(); }
+      } catch (e) {
+        setStatus((e && e.message) || 'Invalid or expired code.', 'err');
+      } finally { verifyBtn.disabled = false; }
+    }
+
+    async function resend(){
+      if (!currentEmail) { setStatus('Enter your email first.', 'err'); return; }
+      setStatus('Resending…');
+      try {
+        var r = await sb.auth.signInWithOtp({ email: currentEmail, options: { shouldCreateUser: true } });
+        setStatus(r && r.error ? (r.error.message || 'Could not resend.') : 'New code sent. Check your email.', r && r.error ? 'err' : 'ok');
+      } catch (e) {
+        setStatus((e && e.message) || 'Could not resend.', 'err');
+      }
+    }
+
+    sendBtn.addEventListener('click', sendCode);
+    verifyBtn.addEventListener('click', verifyCode);
+    resendEl.addEventListener('click', resend);
+    resendEl.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); resend(); } });
+    emailIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); sendCode(); } });
+    codeIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); verifyCode(); } });
+  })();
+
+  // ksauth: sign-out control in the top bar -> sign out, then reload.
+  (function(){
+    var out = document.getElementById('ksauth-signout');
+    if (!out) return;
+    async function doSignOut(){
+      try { await sb.auth.signOut(); } catch (e) {}
+      location.reload();
+    }
+    out.addEventListener('click', doSignOut);
+    out.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSignOut(); } });
   })();
 </script>
 </body>
