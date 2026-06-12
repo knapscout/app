@@ -895,6 +895,97 @@
       state.pins.forEach(addPinToMap);
     }
 
+    function redrawTrack(){
+      trackLine.setLatLngs(state.track.map(p => [p.lat, p.lng]));
+    }
+
+    async function loadFromCloud(){
+      // 1. Auth gate — never load without a confirmed user.
+      const { data: userData, error: userErr } = await sb.auth.getUser();
+      if (userErr || !userData || !userData.user) {
+        console.log('[cloud] not signed in — skipping cloud load, keeping local data.');
+        return;
+      }
+
+      try {
+        // 2. Fetch the three tables (RLS scopes to this user; skip soft-deleted rows).
+        const [sitesRes, pinsRes, tracksRes] = await Promise.all([
+          sb.from('sites').select('*').is('deleted_at', null),
+          sb.from('pins').select('*').is('deleted_at', null),
+          sb.from('tracks').select('*').is('deleted_at', null),
+        ]);
+
+        if (sitesRes.error)  throw sitesRes.error;
+        if (pinsRes.error)   throw pinsRes.error;
+        if (tracksRes.error) throw tracksRes.error;
+
+        const cloudSites  = sitesRes.data  || [];
+        const cloudPins   = pinsRes.data   || [];
+        const cloudTracks = tracksRes.data || [];
+
+        // 3. Safety rail — only replace local view if the cloud actually returned data.
+        //    A failed/empty fetch must never blank the user's existing map.
+        if (cloudSites.length === 0 && cloudPins.length === 0 && cloudTracks.length === 0) {
+          console.log('[cloud] no rows returned — keeping existing local data, no overwrite.');
+          return;
+        }
+
+        // 4. Reverse-translate cloud shape -> app shape.
+        //    Sites: polygon already [lat,lng], passes straight through.
+        const sites = cloudSites.map(s => ({
+          id: s.id,
+          polygon: s.polygon,
+          name: s.name,
+          notes: s.notes,
+          site_id: s.id
+        }));
+
+        //    Pins: pin_type->type, accuracy_meters->accuracy, created_at->timestamp.
+        const pins = cloudPins.map(p => ({
+          id: p.id,
+          type: p.pin_type,
+          lat: p.lat,
+          lng: p.lng,
+          accuracy: p.accuracy_meters,
+          timestamp: p.created_at,
+          note: p.note,
+          site_id: p.site_id
+        }));
+
+        //    Track: app stores points as {lat,lng,t}; cloud points already use {lat,lng,t}.
+        //    Combine all track rows' points into one flat array (we have 1 row today).
+        let track = [];
+        cloudTracks.forEach(t => {
+          if (Array.isArray(t.points)) track = track.concat(t.points);
+        });
+
+        // 5. Replace state, persist to local cache, re-render from scratch.
+        state.sites = sites;
+        state.pins  = pins;
+        state.track = track;
+        save();  // align localStorage cache with the cloud copy
+
+        // Clear existing map layers before redrawing.
+        pinMarkers.forEach(m => map.removeLayer(m));
+        pinMarkers.clear();
+        sitePolygonLayers.forEach(l => map.removeLayer(l));
+        sitePolygonLayers.clear();
+
+        // Redraw everything from the freshly loaded state.
+        state.sites.forEach(renderSitePolygon);
+        state.pins.forEach(addPinToMap);
+        redrawTrack();
+        updateCounts();
+        refreshSiteFilter();
+
+        console.log('[cloud] loaded ' + sites.length + ' sites, ' + pins.length +
+                    ' pins, ' + track.length + ' track points from cloud.');
+      } catch (err) {
+        // Any failure: leave the existing local view intact.
+        console.error('[cloud] load failed — keeping local data:', err.message || err);
+      }
+    }
+
     /* Initial render ----------------------------------------- */
     state.sites.forEach(renderSitePolygon);
     state.pins.forEach(addPinToMap);
@@ -1825,7 +1916,7 @@
     function dismiss(){ s.classList.add('ks-hide'); setTimeout(function(){ if(s&&s.parentNode){ s.parentNode.removeChild(s); } },600); }
     // The reveal path: make sure we have a username, then dismiss the splash to
     // expose the app. Exposed so the sign-in panel can call the SAME path.
-    function reveal(){ if (typeof window.ensureUsername === 'function') { window.ensureUsername(); } dismiss(); }
+    function reveal(){ if (typeof window.ensureUsername === 'function') { window.ensureUsername(); } dismiss(); loadFromCloud(); }
     window.ksauthReveal = reveal;
 
     // On tap: branch on whether a Supabase session already exists.
