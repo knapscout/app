@@ -943,7 +943,7 @@
         //    Pins: pin_type->type, accuracy_meters->accuracy, created_at->timestamp.
         const pins = cloudPins.map(p => ({
           id: p.id,
-          type: p.pin_type,
+          type: p.pin_type === 'no-evidence' ? 'none' : p.pin_type,
           lat: p.lat,
           lng: p.lng,
           accuracy: p.accuracy_meters,
