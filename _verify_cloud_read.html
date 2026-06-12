@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnapScout — Cloud Read Verification (throwaway)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           margin: 0; padding: 16px; background: #1c1c1c; color: #e6e6e6; }
+    h1 { font-size: 16px; color: #9ca3af; font-weight: 600; margin: 0 0 12px; }
+    #banner { font-size: 28px; font-weight: 800; line-height: 1.2; padding: 16px;
+              border-radius: 10px; margin-bottom: 16px; display: none; }
+    #banner.bad  { background: #7f1d1d; color: #fecaca; display: block; }
+    #banner.good { background: #14532d; color: #bbf7d0; display: block; font-size: 18px; }
+    pre { white-space: pre-wrap; word-break: break-word; font-family: "JetBrains Mono",
+          ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5;
+          background: #0f0f0f; border: 1px solid #333; border-radius: 8px; padding: 14px; }
+    .ok   { color: #34d37a; }
+    .warn { color: #f0c420; }
+    .err  { color: #ef4444; }
+    .hd   { color: #60a5fa; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>KnapScout — Cloud Read Verification (throwaway file, safe to delete)</h1>
+  <div id="banner"></div>
+  <pre id="out">Loading…</pre>
+
+  <!-- 1. Same Supabase CDN client tag index.html uses -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // --- Copied EXACTLY from app-repo/index.html (Bite 4 cloud connection) ---
+    const SUPABASE_URL = 'https://rgyeyzlwdlqiwlfgbxle.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_DNuhW2ZSTpz4jU-BV-mtYw_9uzCT-RO';
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // ------------------------------------------------------------------------
+
+    const out = document.getElementById('out');
+    const banner = document.getElementById('banner');
+    let buf = '';
+    function p(line = '') { buf += line + '\n'; out.textContent = buf; }
+    function hr() { p('--------------------------------------------------------'); }
+    // We render via textContent (above) for safety; this re-renders with color spans.
+    function flush() {
+      out.innerHTML = buf
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\[OK\]/g, '<span class="ok">[OK]</span>')
+        .replace(/\[WARN\]/g, '<span class="warn">[WARN]</span>')
+        .replace(/\[ERROR\]/g, '<span class="err">[ERROR]</span>')
+        .replace(/^([A-Z]+:)$/gm, '<span class="hd">$1</span>');
+    }
+    function showBanner(text, cls) { banner.textContent = text; banner.className = cls; }
+
+    function pretty(obj) {
+      try { return JSON.stringify(obj, null, 2); }
+      catch (e) { return String(obj); }
+    }
+
+    // Classify a coordinate pair as [lat,lng] vs [lng,lat] for this region
+    // (Virginia-ish: lat ~ 37-38 positive, lng ~ -78 negative).
+    function classifyPair(pair) {
+      if (!Array.isArray(pair) || pair.length < 2) return '[WARN] not a 2-element array';
+      const a = Number(pair[0]), b = Number(pair[1]);
+      const aIsLat = a >= 24 && a <= 50;        // plausible US latitude, positive
+      const aIsLng = a <= -60 && a >= -130;     // plausible US longitude, negative
+      const bIsLat = b >= 24 && b <= 50;
+      const bIsLng = b <= -60 && b >= -130;
+      if (aIsLat && bIsLng) return '[OK] looks like [lat, lng] — correct for Leaflet';
+      if (aIsLng && bIsLat) return '[WARN] looks like [lng, lat] — REVERSED, would need swap before map render';
+      return '[WARN] ambiguous — first=' + a + ' second=' + b + ' (could not classify confidently)';
+    }
+
+    async function run() {
+      p('Supabase URL: ' + SUPABASE_URL);
+      p('Anon key:     ' + SUPABASE_ANON_KEY.slice(0, 12) + '…(truncated for display)');
+      hr();
+
+      // 2. Auth gate -------------------------------------------------------
+      let user = null;
+      try {
+        const { data, error } = await sb.auth.getUser();
+        if (error) {
+          showBanner('NOT SIGNED IN — open this in a browser where you\'re already signed into the app.', 'bad');
+          p('[ERROR] getUser() returned an error: ' + (error.message || pretty(error)));
+          p('');
+          p('NOTE: getUser() reads the persisted session from THIS origin\'s localStorage.');
+          p('It only works when this page is served from the SAME origin as the app');
+          p('(knapscout.github.io/app/). Opened as a local file:// it will NOT see the session.');
+          flush();
+          return;
+        }
+        user = data && data.user;
+      } catch (e) {
+        showBanner('NOT SIGNED IN — open this in a browser where you\'re already signed into the app.', 'bad');
+        p('[ERROR] getUser() threw: ' + (e && e.message ? e.message : String(e)));
+        flush();
+        return;
+      }
+
+      if (!user) {
+        showBanner('NOT SIGNED IN — open this in a browser where you\'re already signed into the app.', 'bad');
+        p('[ERROR] No authenticated user (getUser returned null user).');
+        p('');
+        p('This confirms the auth gate works: with no session, the real cloud load should');
+        p('bail out here exactly like this instead of attempting a fetch.');
+        flush();
+        return;
+      }
+
+      // 3. Signed in -------------------------------------------------------
+      showBanner('SIGNED IN — running verification queries…', 'good');
+      p('[OK] Authenticated.');
+      p('user.id    = ' + user.id);
+      p('user.email = ' + (user.email || '(none)'));
+      hr();
+
+      // ---- SITES ---------------------------------------------------------
+      p('SITES:');
+      try {
+        const { data: sites, error } = await sb.from('sites').select('*').is('deleted_at', null);
+        if (error) throw error;
+        p('  count returned: ' + sites.length + (sites.length === 3 ? '  [OK] (expected 3)' : '  [WARN] expected 3'));
+        if (sites.length) {
+          p('  column names (Object.keys of first row):');
+          p('    ' + JSON.stringify(Object.keys(sites[0])));
+          p('');
+          sites.forEach((s, i) => {
+            p('  site[' + i + ']: name = ' + JSON.stringify(s.name));
+            p('           id   = ' + s.id);
+            const poly = s.polygon;
+            if (Array.isArray(poly) && poly.length) {
+              p('           polygon[0] = ' + JSON.stringify(poly[0]));
+              p('           => ' + classifyPair(poly[0]));
+              p('           (polygon has ' + poly.length + ' coordinate pairs)');
+            } else if (typeof poly === 'string') {
+              // In case polygon comes back as a JSON string rather than parsed array.
+              p('           [WARN] polygon is a STRING, not a parsed array. Raw start: ' + poly.slice(0, 60));
+              try {
+                const parsed = JSON.parse(poly);
+                if (Array.isArray(parsed) && parsed.length) {
+                  p('           parsed polygon[0] = ' + JSON.stringify(parsed[0]));
+                  p('           => ' + classifyPair(parsed[0]));
+                }
+              } catch (pe) { p('           [ERROR] could not JSON.parse polygon string: ' + pe.message); }
+            } else {
+              p('           [WARN] polygon missing or unexpected type: ' + typeof poly);
+            }
+            p('');
+          });
+        }
+      } catch (e) {
+        p('  [ERROR] sites query failed: ' + (e && e.message ? e.message : pretty(e)));
+        if (e && e.code) p('  error code: ' + e.code);
+        if (e && e.hint) p('  hint: ' + e.hint);
+      }
+      hr();
+
+      // ---- PINS ----------------------------------------------------------
+      p('PINS:');
+      try {
+        const { data: pins, error } = await sb.from('pins').select('*').is('deleted_at', null);
+        if (error) throw error;
+        p('  count returned: ' + pins.length + (pins.length === 69 ? '  [OK] (expected 69)' : '  [WARN] expected 69'));
+        if (pins.length) {
+          p('  column names (Object.keys of first row):');
+          p('    ' + JSON.stringify(Object.keys(pins[0])));
+          const types = Array.from(new Set(pins.map(x => x.pin_type)));
+          p('  distinct pin_type values: ' + JSON.stringify(types));
+          const expected = ['no-evidence', 'evidence', 'find'];
+          const missing = expected.filter(t => !types.includes(t));
+          const extra = types.filter(t => !expected.includes(t));
+          if (!missing.length && !extra.length) p('    [OK] matches expected set');
+          else {
+            if (missing.length) p('    [WARN] missing expected types: ' + JSON.stringify(missing));
+            if (extra.length) p('    [WARN] unexpected extra types: ' + JSON.stringify(extra));
+          }
+          p('');
+          p('  sample pin (full row):');
+          p(pretty(pins[0]).split('\n').map(l => '    ' + l).join('\n'));
+        }
+      } catch (e) {
+        p('  [ERROR] pins query failed: ' + (e && e.message ? e.message : pretty(e)));
+        if (e && e.code) p('  error code: ' + e.code);
+        if (e && e.hint) p('  hint: ' + e.hint);
+      }
+      hr();
+
+      // ---- TRACKS --------------------------------------------------------
+      p('TRACKS:');
+      try {
+        const { data: tracks, error } = await sb.from('tracks').select('*').is('deleted_at', null);
+        if (error) throw error;
+        p('  count returned: ' + tracks.length + (tracks.length === 1 ? '  [OK] (expected 1)' : '  [WARN] expected 1'));
+        if (tracks.length) {
+          p('  column names (Object.keys of first row):');
+          p('    ' + JSON.stringify(Object.keys(tracks[0])));
+          const t0 = tracks[0];
+          let pts = t0.points;
+          if (typeof pts === 'string') {
+            p('  [WARN] points is a STRING, not a parsed array — attempting JSON.parse');
+            try { pts = JSON.parse(pts); } catch (pe) { p('  [ERROR] could not parse points: ' + pe.message); pts = null; }
+          }
+          if (Array.isArray(pts)) {
+            p('  points array length: ' + pts.length + (pts.length === 3119 ? '  [OK] (expected 3119)' : '  [WARN] expected 3119'));
+            if (pts.length) {
+              p('  first point exactly as stored:');
+              p('    ' + JSON.stringify(pts[0]));
+              p('    key names: ' + JSON.stringify(Object.keys(pts[0] || {})));
+            }
+          } else {
+            p('  [WARN] points is not an array; type = ' + typeof pts);
+          }
+        }
+      } catch (e) {
+        p('  [ERROR] tracks query failed: ' + (e && e.message ? e.message : pretty(e)));
+        if (e && e.code) p('  error code: ' + e.code);
+        if (e && e.hint) p('  hint: ' + e.hint);
+      }
+      hr();
+      p('Verification complete.');
+      flush();
+    }
+
+    run().catch(e => {
+      p('[ERROR] Unexpected top-level failure: ' + (e && e.message ? e.message : String(e)));
+      flush();
+    });
+  </script>
+</body>
+</html>
