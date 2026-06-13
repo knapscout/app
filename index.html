@@ -605,7 +605,7 @@
     const trackLine = L.polyline(
       state.track.map(p => [p.lat, p.lng]),
       { color: '#3b82f6', weight: 4, opacity: 0.85 }
-    ).addTo(map);
+    );   // intentionally NOT added to map — legacy track hidden, data retained (beta)
 
     /* Site polygon rendering pool */
     const sitePolygonLayers = new Map();   // site_id -> L.polygon
@@ -1065,13 +1065,15 @@
       setStatus('ok', '');
       updateAccuracyUI(accuracy);
 
-      const last = state.track[state.track.length - 1];
-      if (!last || haversine(last.lat, last.lng, latitude, longitude) >= 3) {
-        const pt = { lat: latitude, lng: longitude, t: new Date().toISOString() };
-        state.track.push(pt);
-        trackLine.addLatLng([latitude, longitude]);
-        save();
-      }
+      // legacy track frozen for beta — data kept, no longer grown or drawn.
+      // (new movement is recorded by the hunt system instead.)
+      // const last = state.track[state.track.length - 1];
+      // if (!last || haversine(last.lat, last.lng, latitude, longitude) >= 3) {
+      //   const pt = { lat: latitude, lng: longitude, t: new Date().toISOString() };
+      //   state.track.push(pt);
+      //   trackLine.addLatLng([latitude, longitude]);
+      //   save();
+      // }
 
       if (activeHunt) {
         const hlast = activeHunt.points[activeHunt.points.length - 1];
