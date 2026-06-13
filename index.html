@@ -1004,7 +1004,7 @@
         map.setView([latitude, longitude], 18);
         firstFix = false;
       }
-      setStatus('ok', `GPS ±${Math.round(accuracy)}m`);
+      setStatus('ok', '');
       updateAccuracyUI(accuracy);
 
       const last = state.track[state.track.length - 1];
