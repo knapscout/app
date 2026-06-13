@@ -94,6 +94,19 @@
       padding: 6px 8px; font-size: 14px; font-weight: 600;
     }
 
+    #hunt-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; background: #1f2937;
+      flex-shrink: 0; border-top: 1px solid #374151;
+    }
+    #hunt-btn {
+      flex: 1; width: 100%; min-height: 44px;
+      border: none; border-radius: 6px; padding: 10px;
+      font-size: 14px; font-weight: 600; color: #fff;
+      background: #22c55e;                 /* green = Start */
+    }
+    #hunt-btn.recording { background: #ef4444; }   /* red = End */
+
     #buttons {
       display: flex; gap: 8px; padding: 12px;
       background: #111827; flex-shrink: 0;
@@ -422,6 +435,9 @@
         <option value="__all__">All Sites</option>
       </select>
     </div>
+    <div id="hunt-bar">
+      <button id="hunt-btn" type="button">Start Hunt</button>
+    </div>
     <div id="buttons">
       <button class="btn-none"     data-type="none" type="button">No Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
       <button class="btn-evidence" data-type="evidence" type="button">Evidence<span class="btn-acc acc-btn-unknown">--</span></button>
@@ -519,18 +535,41 @@
       started: new Date().toISOString(),
       pins: [],
       track: [],
+      hunts: [],
       sites: [],
       show_boundaries: true
     };
     if (!state.started) state.started = new Date().toISOString();
     if (!Array.isArray(state.pins)) state.pins = [];
     if (!Array.isArray(state.track)) state.track = [];
+    if (!Array.isArray(state.hunts)) state.hunts = [];
     if (!Array.isArray(state.sites)) state.sites = [];
     if (typeof state.show_boundaries !== 'boolean') state.show_boundaries = true;
     /* Legacy data migration: every pin needs a site_id field. */
     state.pins.forEach(p => {
       if (!('site_id' in p)) p.site_id = null;
     });
+    /* Stale-hunt recovery: a hunt persisted as active means the app reloaded
+       mid-hunt. activeHunt is in-memory only, so we can't resume it safely
+       (drive-home-while-closed risk). Auto-close it instead: discard empty
+       hunts, otherwise stamp ended_at from its last point (falling back to
+       started_at), file it in state.hunts, and clear the dangling open
+       session. This recovers the interrupted hunt's points. */
+    if (state.activeHunt) {
+      const ah = state.activeHunt;
+      if (!Array.isArray(ah.points)) ah.points = [];
+      if (ah.points.length === 0) {
+        // empty hunt (started but app closed before any point) — discard, not data
+        state.activeHunt = null;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } else {
+        const lastPt = ah.points[ah.points.length - 1];
+        ah.ended_at = (lastPt && lastPt.t) ? lastPt.t : ah.started_at;
+        state.hunts.push(ah);
+        state.activeHunt = null;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+    }
     state.version = 2;
 
     let currentPosition = null;
@@ -573,6 +612,11 @@
 
     /* Pin marker pool — used for filter show/hide */
     const pinMarkers = new Map();          // pin.id -> L.marker
+
+    /* Hunt session state (local-only, parallel to legacy state.track) */
+    let activeHunt = null;            // the in-progress hunt object, or null
+    const huntLayers = new Map();     // hunt.id -> L.polyline (completed + active)
+    // Hunt object shape: { id, site_id, started_at, ended_at, points: [{lat,lng,t}, ...] }
 
     /* DOM refs ------------------------------------------------- */
     const statusEl = document.getElementById('status');
@@ -885,6 +929,16 @@
       trackLine.setLatLngs(state.track.map(p => [p.lat, p.lng]));
     }
 
+    function redrawHunts(){
+      huntLayers.forEach(l => map.removeLayer(l));
+      huntLayers.clear();
+      state.hunts.forEach(h => {
+        const line = L.polyline(h.points.map(p => [p.lat, p.lng]),
+          { color:'#a855f7', weight:5, opacity:0.9 }).addTo(map);
+        huntLayers.set(h.id, line);
+      });
+    }
+
     async function loadFromCloud(){
       // 1. Auth gate — never load without a confirmed user.
       const { data: userData, error: userErr } = await sb.auth.getUser();
@@ -961,6 +1015,9 @@
         state.sites.forEach(renderSitePolygon);
         state.pins.forEach(addPinToMap);
         redrawTrack();
+        // Cloud load does NOT bring hunts (local-only this bite); only redraw
+        // if the local state still has a hunts array to draw.
+        if (Array.isArray(state.hunts)) redrawHunts();
         updateCounts();
         refreshSiteFilter();
 
@@ -975,6 +1032,7 @@
     /* Initial render ----------------------------------------- */
     state.sites.forEach(renderSitePolygon);
     state.pins.forEach(addPinToMap);
+    redrawHunts();
     updateCounts();
     refreshSiteFilter();
 
@@ -1013,6 +1071,20 @@
         state.track.push(pt);
         trackLine.addLatLng([latitude, longitude]);
         save();
+      }
+
+      if (activeHunt) {
+        const hlast = activeHunt.points[activeHunt.points.length - 1];
+        const movedEnough = !hlast || haversine(hlast.lat, hlast.lng, latitude, longitude) >= 3;
+        // drive-home guard: if there's a huge jump in distance from the last point
+        // (e.g. resumed after travel), do NOT extend the hunt across it.
+        const tooFar = hlast && haversine(hlast.lat, hlast.lng, latitude, longitude) > 500;
+        if (movedEnough && !tooFar) {
+          activeHunt.points.push({ lat: latitude, lng: longitude, t: new Date().toISOString() });
+          const line = huntLayers.get(activeHunt.id);
+          if (line) line.addLatLng([latitude, longitude]);
+          save();
+        }
       }
     }
     function onPositionError(err) { setStatus('err', `GPS error: ${err.message}`); }
@@ -1157,10 +1229,10 @@
     /* Clear -------------------------------------------------- */
     document.getElementById('clear-btn').addEventListener('click', async () => {
       if (drawMode || editMode) return;
-      const n = state.pins.length, t = state.track.length, s = state.sites.length;
+      const n = state.pins.length, t = state.track.length, s = state.sites.length, h = state.hunts.length;
       const ok = await confirmModal({
         title: 'Clear survey?',
-        message: `This will delete ${n} pin(s), ${t} track point(s), and ${s} site(s). This cannot be undone.`,
+        message: `This will delete ${n} pin(s), ${t} track point(s), ${h} hunt(s), and ${s} site(s). This cannot be undone.`,
         okLabel: 'Clear all',
         cancelLabel: 'Cancel',
         destructive: true
@@ -1171,6 +1243,8 @@
         started: new Date().toISOString(),
         pins: [],
         track: [],
+        hunts: [],
+        activeHunt: null,
         sites: [],
         show_boundaries: state.show_boundaries
       };
@@ -1178,6 +1252,12 @@
       for (const m of pinMarkers.values()) map.removeLayer(m);
       pinMarkers.clear();
       trackLine.setLatLngs([]);
+      for (const l of huntLayers.values()) map.removeLayer(l);
+      huntLayers.clear();
+      activeHunt = null;
+      const huntBtn = document.getElementById('hunt-btn');
+      huntBtn.textContent = 'Start Hunt';
+      huntBtn.classList.remove('recording');
       refreshSitePolygons();
       refreshSiteFilter();
       updateCounts();
@@ -1359,6 +1439,52 @@
       activeFilter = filterEl.value;
       refreshPinVisibilityForFilter();
       updateCounts();
+    });
+
+    /* Hunt sessions ---------------------------------------- */
+    function currentSelectedSiteId() {
+      // activeFilter is the selected site (or '__all__' / '__unsorted__')
+      return (activeFilter && activeFilter !== '__all__' && activeFilter !== '__unsorted__')
+        ? activeFilter : null;
+    }
+
+    function startHunt() {
+      const siteId = currentSelectedSiteId();
+      if (!siteId) {
+        alert('Select a site first (use the Site dropdown). Create the site and its boundary, then start your hunt.');
+        return;
+      }
+      activeHunt = {
+        id: 'hunt_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        site_id: siteId,
+        started_at: new Date().toISOString(),
+        ended_at: null,
+        points: []
+      };
+      const line = L.polyline([], { color:'#a855f7', weight:5, opacity:0.9 }).addTo(map);
+      huntLayers.set(activeHunt.id, line);
+      const btn = document.getElementById('hunt-btn');
+      btn.textContent = 'End Hunt';
+      btn.classList.add('recording');
+      state.activeHunt = activeHunt;   // persist in-progress hunt for stale-hunt recovery
+      save();
+    }
+
+    function endHunt() {
+      if (!activeHunt) return;
+      activeHunt.ended_at = new Date().toISOString();
+      state.hunts.push(activeHunt);
+      activeHunt = null;
+      state.activeHunt = null;
+      const btn = document.getElementById('hunt-btn');
+      btn.textContent = 'Start Hunt';
+      btn.classList.remove('recording');
+      save();
+    }
+
+    document.getElementById('hunt-btn').addEventListener('click', () => {
+      if (drawMode || editMode) return;
+      if (activeHunt) endHunt(); else startHunt();
     });
 
     /* Sites panel ------------------------------------------ */
