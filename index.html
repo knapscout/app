@@ -63,16 +63,6 @@
     #status.tier-warn #status-text { color: #ff8c42; }
     #status.tier-bad  #status-text { color: #ef4444; }
 
-    #gps-accuracy {
-      font-size: 20px; font-weight: 800; line-height: 1.1;
-      letter-spacing: 0.3px; white-space: nowrap; flex-shrink: 0;
-      padding: 2px 4px;
-    }
-    .acc-status-good    { color: #34d37a; }
-    .acc-status-ok      { color: #f0c420; }
-    .acc-status-warn    { color: #ff8c42; }
-    .acc-status-bad     { color: #ef4444; }
-    .acc-status-unknown { color: #9ca3af; }
     #status button {
       color: white; border: none;
       padding: 5px 8px; border-radius: 5px;
@@ -396,7 +386,6 @@
         <span id="status-text">Requesting GPS…</span>
         <span id="counts"></span>
       </div>
-      <div id="gps-accuracy" class="acc-status-unknown">GPS: --</div>
       <div class="right">
         <button id="sites-btn" type="button">Sites</button>
         <button id="clear-btn" type="button">Clear</button>
@@ -589,7 +578,6 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('status-text');
     const countsEl = document.getElementById('counts');
-    const gpsAccuracyEl = document.getElementById('gps-accuracy');
     const btnAccEls = document.querySelectorAll('.btn-acc');
     const filterEl = document.getElementById('site-filter');
     const filterBarEl = document.getElementById('filter-bar');
@@ -612,8 +600,6 @@
     function updateAccuracyUI(accuracy) {
       const tier = accuracyTier(accuracy);
       const text = (accuracy != null && isFinite(accuracy)) ? `${Math.round(accuracy)}m` : '--';
-      gpsAccuracyEl.textContent = `GPS: ${text}`;
-      gpsAccuracyEl.className = 'acc-status-' + tier;
       btnAccEls.forEach(el => {
         el.textContent = text;
         el.className = 'btn-acc acc-btn-' + tier;
