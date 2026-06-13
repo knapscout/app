@@ -786,12 +786,10 @@
 
     /* Site IDs ----------------------------------------------- */
     function generateSiteId() {
-      let max = 0;
-      for (const s of state.sites) {
-        const m = /^site_(\d+)$/.exec(s.id);
-        if (m) max = Math.max(max, parseInt(m[1], 10));
-      }
-      return 'site_' + String(max + 1).padStart(3, '0');
+      // Unique, collision-free id matching the UUID scheme used by existing/cloud sites.
+      // (The previous counter scanned for /^site_(\d+)$/, but existing sites use UUIDs,
+      //  so it never matched, max stayed 0, and it returned "site_001" every time.)
+      return crypto.randomUUID();
     }
 
     /* Site polygon rendering --------------------------------- */
@@ -939,6 +937,24 @@
       });
     }
 
+    // Union cloud + local records by id. Cloud is authority; local-only ids are
+    // preserved (never wiped). With preferNewer, a local edit with a strictly newer
+    // updated_at supersedes the cloud copy of the same id. No cloud id is ever dropped.
+    function mergeById(cloudArr, localArr, opts = {}) {
+      const preferNewer = !!opts.preferNewer;
+      const byId = new Map();
+      for (const r of cloudArr) { if (r && r.id != null) byId.set(r.id, r); }   // cloud is authority
+      for (const r of localArr) {
+        if (!r || r.id == null) continue;
+        if (!byId.has(r.id)) { byId.set(r.id, r); }                              // local-only: preserve
+        else if (preferNewer) {
+          const ex = byId.get(r.id);
+          if ((r.updated_at || '') > (ex.updated_at || '')) byId.set(r.id, r);  // local edit wins if newer
+        }
+      }
+      return Array.from(byId.values());
+    }
+
     async function loadFromCloud(){
       // 1. Auth gate — never load without a confirmed user.
       const { data: userData, error: userErr } = await sb.auth.getUser();
@@ -1000,8 +1016,12 @@
         });
 
         // 5. Replace state, persist to local cache, re-render from scratch.
-        state.sites = sites;
-        state.pins  = pins;
+        // Non-destructive: union cloud with any local-only records (e.g. sites drawn
+        // in-app that were never pushed to the cloud) so a cloud load can't wipe them.
+        const localSites = state.sites || [];
+        const localPins  = state.pins  || [];
+        state.sites = mergeById(sites, localSites, { preferNewer: true });
+        state.pins  = mergeById(pins,  localPins);   // pins have no updated_at — union by id
         state.track = track;
         save();  // align localStorage cache with the cloud copy
 
@@ -1827,8 +1847,10 @@
       if (!name) return; /* user cancelled — polygon discarded */
 
       const now = new Date().toISOString();
+      const newId = generateSiteId();
       const site = {
-        id: generateSiteId(),
+        id: newId,
+        site_id: newId,          // mirror id so new sites match the existing/cloud schema
         name,
         polygon: points,
         notes: '',
