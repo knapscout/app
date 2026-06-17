@@ -531,7 +531,7 @@
 
     /* Load & migrate state. */
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {
-      version: 2,
+      version: 3,
       started: new Date().toISOString(),
       pins: [],
       track: [],
@@ -570,7 +570,7 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       }
     }
-    state.version = 2;
+    state.version = 3;
 
     let currentPosition = null;
     let userMarker = null;
@@ -1240,7 +1240,8 @@
           accuracy: currentPosition.accuracy,
           timestamp: new Date().toISOString(),
           note: '',
-          site_id: siteIdForCoords(lat, lng)
+          site_id: siteIdForCoords(lat, lng),
+          hunt_id: activeHunt ? activeHunt.id : null
         };
         state.pins.push(pin);
         save();
@@ -1261,7 +1262,7 @@
       });
       if (!ok) return;
       state = {
-        version: 2,
+        version: 3,
         started: new Date().toISOString(),
         pins: [],
         track: [],
@@ -1289,16 +1290,25 @@
     document.getElementById('export-btn').addEventListener('click', async () => {
       if (drawMode || editMode) return;
       const payload = {
-        version: 2,
+        version: 3,
         started: state.started,
         username,
         pins: state.pins.map(p => ({
           ...p,
           created_by: p.created_by || username,
-          site_id: ('site_id' in p) ? p.site_id : null
+          site_id: ('site_id' in p) ? p.site_id : null,
+          hunt_id: ('hunt_id' in p) ? p.hunt_id : null
         })),
         track: state.track.map(t => ({ ...t, created_by: t.created_by || username })),
         sites: state.sites.map(s => ({ ...s })),
+        hunts: state.hunts.map(h => ({
+          id: h.id,
+          site_id: h.site_id,
+          created_by: h.created_by || username,
+          started_at: h.started_at,
+          ended_at: h.ended_at,
+          points: Array.isArray(h.points) ? h.points : []
+        })),
         exported_at: new Date().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1359,10 +1369,11 @@
       const importedPins = Array.isArray(imported.pins) ? imported.pins : [];
       const importedTracks = Array.isArray(imported.track) ? imported.track : [];
       const importedSites = Array.isArray(imported.sites) ? imported.sites : [];
+      const importedHunts = Array.isArray(imported.hunts) ? imported.hunts : [];
 
       const ok = await confirmModal({
         title: `Import from ${sourceUsername}?`,
-        message: `Import ${importedPins.length} pin(s), ${importedTracks.length} track point(s), and ${importedSites.length} site(s)?`,
+        message: `Import ${importedPins.length} pin(s), ${importedTracks.length} track point(s), ${importedHunts.length} hunt(s), and ${importedSites.length} site(s)?`,
         okLabel: 'Import',
         cancelLabel: 'Cancel',
         destructive: false
@@ -1395,7 +1406,8 @@
           ...p,
           id: newId,
           created_by: p.created_by || sourceUsername,
-          site_id: finalSiteId
+          site_id: finalSiteId,
+          hunt_id: ('hunt_id' in p) ? p.hunt_id : null
         };
         if (pinIndex.has(newId)) state.pins[pinIndex.get(newId)] = tagged;
         else { pinIndex.set(newId, state.pins.length); state.pins.push(tagged); }
@@ -1428,10 +1440,34 @@
         importedSiteCount++;
       }
 
+      /* Hunt import — hunts carry stable ids (UUIDs), so mergeById keys
+         cleanly with no prefixing. Pins reference hunt ids verbatim, so
+         leaving hunt ids un-prefixed keeps the pin->hunt link intact.
+         Older exports with no hunts key arrive as [] and no-op here.
+
+         DRIFT (intentional, not yet handled): a hunt's site_id is preserved
+         verbatim, but imported sites get their ids prefixed (siteIdMap above).
+         So an imported hunt's site_id will NOT match the prefixed imported
+         site id. This is benign today because nothing looks hunts up by site
+         (redrawHunts only draws points). Once hunts are filtered or grouped by
+         site, hunt.site_id must be run through siteIdMap here on import. */
+      const normalizedHunts = importedHunts.map(h => ({
+        id: h.id,
+        site_id: h.site_id != null ? h.site_id : null,
+        created_by: h.created_by || sourceUsername,
+        started_at: h.started_at || null,
+        ended_at: h.ended_at || null,
+        points: Array.isArray(h.points) ? h.points : []
+      })).filter(h => h.id != null);
+      const huntCountBefore = state.hunts.length;
+      state.hunts = mergeById(normalizedHunts, state.hunts);
+      const importedHuntCount = state.hunts.length - huntCountBefore;
+
       save();
       renderAllPins();
+      redrawHunts();
       refreshSiteFilter();
-      alert(`Imported ${importedPins.length} pin(s), ${importedTracks.length} track point(s), and ${importedSiteCount} site(s) from ${sourceUsername}.`);
+      alert(`Imported ${importedPins.length} pin(s), ${importedTracks.length} track point(s), ${importedHuntCount} hunt(s), and ${importedSiteCount} site(s) from ${sourceUsername}.`);
     });
 
     /* Filter dropdown -------------------------------------- */
@@ -1477,8 +1513,9 @@
         return;
       }
       activeHunt = {
-        id: 'hunt_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        id: crypto.randomUUID(),
         site_id: siteId,
+        created_by: username,
         started_at: new Date().toISOString(),
         ended_at: null,
         points: []
@@ -2213,6 +2250,17 @@
     out.addEventListener('click', doSignOut);
     out.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSignOut(); } });
   })();
+</script>
+<script>
+  // Register the service worker for offline field use. Network-first shell means
+  // a new deploy loads on the next online launch; cache keeps the app alive offline.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function (err) {
+        console.warn('SW registration failed:', err);
+      });
+    });
+  }
 </script>
 </body>
 </html>
