@@ -389,6 +389,32 @@
       color: #a855f7; font-size: 11px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
     }
+    /* Hold-to-drop visual: a fill sweeps across the button while held. */
+    #buttons button {
+      position: relative;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+    #buttons button::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      transform: scaleX(0);
+      transform-origin: left;
+      background: rgba(255, 255, 255, 0.28);
+      pointer-events: none;
+    }
+    #buttons button.holding::after {
+      transform: scaleX(1);
+      transition: transform var(--hold-ms, 600ms) linear;
+    }
+    #buttons button.held::after {
+      transform: scaleX(1);
+      background: rgba(255, 255, 255, 0.55);
+    }
   </style>
 </head>
 <body>
@@ -1217,36 +1243,70 @@
       });
     }
 
+    // Hold-to-drop: a deliberate press-and-hold drops a pin. Brief taps (pocket
+    // brushes, fabric contact, an overlay dismissing onto a button) are ignored.
+    // HOLD_MS is the single tunable: raise it if stray taps still slip through,
+    // lower it if a real drop feels sluggish.
+    const HOLD_MS = 600;
+
+    async function dropPin(type) {
+      if (!currentPosition) {
+        setStatus('err', 'Waiting for GPS fix…');
+        return;
+      }
+      if (drawMode || editMode) return; // pin drop disabled while drawing/editing
+
+      const acc = currentPosition.accuracy;
+      if (acc != null && isFinite(acc) && acc > 100) {
+        const ok = await confirmPoorGPS(acc);
+        if (!ok) return;
+      }
+
+      const lat = currentPosition.lat, lng = currentPosition.lng;
+      const pin = {
+        id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+        type,
+        lat, lng,
+        accuracy: currentPosition.accuracy,
+        timestamp: new Date().toISOString(),
+        note: '',
+        site_id: siteIdForCoords(lat, lng),
+        hunt_id: activeHunt ? activeHunt.id : null
+      };
+      state.pins.push(pin);
+      save();
+      addPinToMap(pin);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+
     document.querySelectorAll('#buttons button').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (!currentPosition) {
-          setStatus('err', 'Waiting for GPS fix…');
-          return;
-        }
-        if (drawMode || editMode) return; // pin drop disabled while drawing/editing
+      let holdTimer = null;
+      btn.style.setProperty('--hold-ms', HOLD_MS + 'ms');
 
-        const type = btn.dataset.type;
-        const acc = currentPosition.accuracy;
-        if (acc != null && isFinite(acc) && acc > 100) {
-          const ok = await confirmPoorGPS(acc);
-          if (!ok) return;
-        }
+      const startHold = (e) => {
+        e.preventDefault();
+        if (holdTimer) return;
+        btn.classList.add('holding');
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          btn.classList.remove('holding');
+          btn.classList.add('held');
+          setTimeout(() => btn.classList.remove('held'), 200);
+          dropPin(btn.dataset.type);
+        }, HOLD_MS);
+      };
 
-        const lat = currentPosition.lat, lng = currentPosition.lng;
-        const pin = {
-          id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
-          type,
-          lat, lng,
-          accuracy: currentPosition.accuracy,
-          timestamp: new Date().toISOString(),
-          note: '',
-          site_id: siteIdForCoords(lat, lng),
-          hunt_id: activeHunt ? activeHunt.id : null
-        };
-        state.pins.push(pin);
-        save();
-        addPinToMap(pin);
-      });
+      const cancelHold = () => {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        btn.classList.remove('holding');
+      };
+
+      btn.addEventListener('pointerdown', startHold);
+      btn.addEventListener('pointerup', cancelHold);
+      btn.addEventListener('pointerleave', cancelHold);
+      btn.addEventListener('pointercancel', cancelHold);
+      // Swallow the trailing click so nothing double-fires after a pointer sequence.
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
     });
 
     /* Clear -------------------------------------------------- */
