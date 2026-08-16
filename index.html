@@ -730,6 +730,18 @@
       return isCloudUuid(siteId) ? siteId : null;
     }
 
+    // Same UUID gate as sites, for the same reason: pins.hunt_id is a foreign
+    // key to tracks(id), so a legacy/non-UUID hunt id would fail the constraint.
+    // Such a pin still records its hunt locally and just uploads unattached.
+    //
+    // Existence, not just shape, matters here: the referenced track row must
+    // already be in the cloud when the pin lands. startHunt() enqueues the
+    // track ahead of any pin that can reference it, and the queue is FIFO —
+    // see the note there.
+    function cloudSafeHuntId(huntId) {
+      return isCloudUuid(huntId) ? huntId : null;
+    }
+
     function syncPinCreate(pin) {
       enqueueSync('pin', pin.id, 'create', {
         pin_type: cloudPinType(pin.type),
@@ -738,6 +750,7 @@
         accuracy_meters: pin.accuracy != null && isFinite(pin.accuracy) ? pin.accuracy : null,
         note: pin.note || null,
         site_id: cloudSafeSiteId(pin.site_id),
+        hunt_id: cloudSafeHuntId(pin.hunt_id),
         created_at: pin.timestamp
       });
     }
@@ -749,7 +762,8 @@
         lng: pin.lng,
         accuracy_meters: pin.accuracy != null && isFinite(pin.accuracy) ? pin.accuracy : null,
         note: pin.note || null,
-        site_id: cloudSafeSiteId(pin.site_id)
+        site_id: cloudSafeSiteId(pin.site_id),
+        hunt_id: cloudSafeHuntId(pin.hunt_id)
       });
     }
 
@@ -765,13 +779,24 @@
       enqueueSync('site', siteId, 'delete');
     }
 
-    function syncTrackCreate(hunt) {
-      enqueueSync('track', hunt.id, 'create', {
+    function trackRow(hunt) {
+      return {
         site_id: cloudSafeSiteId(hunt.site_id),
         points: Array.isArray(hunt.points) ? hunt.points : [],
         started_at: hunt.started_at,
         ended_at: hunt.ended_at
-      });
+      };
+    }
+
+    function syncTrackCreate(hunt) {
+      enqueueSync('track', hunt.id, 'create', trackRow(hunt));
+    }
+
+    // Re-sends the whole track row. Pushes are upserts keyed on id, so this
+    // both finalises a hunt already created in the cloud and stands in for the
+    // create if that never happened (a hunt begun before hunt_id shipped).
+    function syncTrackUpdate(hunt) {
+      enqueueSync('track', hunt.id, 'update', trackRow(hunt));
     }
   </script>
   <script>
@@ -814,9 +839,11 @@
     if (!Array.isArray(state.hunts)) state.hunts = [];
     if (!Array.isArray(state.sites)) state.sites = [];
     if (typeof state.show_boundaries !== 'boolean') state.show_boundaries = true;
-    /* Legacy data migration: every pin needs a site_id field. */
+    /* Legacy data migration: every pin needs site_id and hunt_id fields.
+       Pins dropped before hunts existed have no hunt and stay null. */
     state.pins.forEach(p => {
       if (!('site_id' in p)) p.site_id = null;
+      if (!('hunt_id' in p)) p.hunt_id = null;
     });
     /* Stale-hunt recovery: a hunt persisted as active means the app reloaded
        mid-hunt. activeHunt is in-memory only, so we can't resume it safely
@@ -837,7 +864,7 @@
         state.hunts.push(ah);
         state.activeHunt = null;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        syncTrackCreate(ah);   // recovered hunt still becomes a cloud track
+        syncTrackUpdate(ah);   // recovered hunt still becomes a cloud track (upsert)
       }
     }
     state.version = 3;
@@ -1280,7 +1307,8 @@
           accuracy: p.accuracy_meters,
           timestamp: p.created_at,
           note: p.note,
-          site_id: p.site_id
+          site_id: p.site_id,
+          hunt_id: p.hunt_id
         }));
 
         //    Tracks split by kind (both use {lat,lng,t} points):
@@ -1864,13 +1892,21 @@
       btn.classList.add('recording');
       state.activeHunt = activeHunt;   // persist in-progress hunt for stale-hunt recovery
       save();
+      // Create the cloud track NOW, not at endHunt. Pins dropped during this
+      // hunt carry hunt_id, and pins.hunt_id is a foreign key to tracks(id) —
+      // if the track only appeared when the hunt ended, every such pin would
+      // reach the cloud first, fail the constraint, and dead-letter after
+      // SYNC_MAX_ATTEMPTS. The queue is FIFO, so enqueuing here puts the track
+      // ahead of any pin that can reference it. endHunt() then upserts the
+      // finished row over this one.
+      syncTrackCreate(activeHunt);
     }
 
     function endHunt() {
       if (!activeHunt) return;
       activeHunt.ended_at = new Date().toISOString();
       state.hunts.push(activeHunt);
-      syncTrackCreate(activeHunt);   // a completed hunt is a cloud track row
+      syncTrackUpdate(activeHunt);   // finalise the row startHunt already created
       activeHunt = null;
       state.activeHunt = null;
       const btn = document.getElementById('hunt-btn');
