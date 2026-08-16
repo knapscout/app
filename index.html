@@ -154,7 +154,7 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
     .modal-title { font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 8px; }
-    .modal-message { font-size: 15px; color: #374151; margin-bottom: 18px; line-height: 1.4; }
+    .modal-message { font-size: 15px; color: #374151; margin-bottom: 18px; line-height: 1.4; white-space: pre-line; }
     .modal-buttons { display: flex; gap: 10px; }
     .modal-buttons button {
       flex: 1; padding: 12px; border: none; border-radius: 8px;
@@ -637,11 +637,21 @@
       localStorage.setItem(SYNC_DEAD_KEY, JSON.stringify(dead));
     }
 
-    let syncFlushing = false;
-    async function flushSyncQueue() {
-      if (syncFlushing || syncQueue.length === 0) return;
-      if (!navigator.onLine) return;
-      syncFlushing = true;
+    // A caller awaiting flushSyncQueue() must get "this flush attempt is
+    // finished", not "a flush was already running somewhere" — so an
+    // in-flight flush shares its promise instead of bailing early. The
+    // import flow depends on this: it enqueues (which schedules a flush
+    // on a 50ms timer) and then awaits a flush of its own; under the old
+    // boolean guard that await resolved immediately and "import
+    // complete" could be reported with the queue still full.
+    let syncFlushPromise = null;
+    function flushSyncQueue() {
+      if (syncFlushPromise) return syncFlushPromise;
+      if (syncQueue.length === 0 || !navigator.onLine) return Promise.resolve();
+      syncFlushPromise = doFlushSyncQueue().finally(() => { syncFlushPromise = null; });
+      return syncFlushPromise;
+    }
+    async function doFlushSyncQueue() {
       try {
         const { data: userData } = await sb.auth.getUser();
         const user = userData && userData.user;
@@ -657,6 +667,14 @@
               // Soft delete: the row survives, deleted_at marks it.
               ({ error } = await sb.from(table)
                 .update({ deleted_at: new Date().toISOString() })
+                .eq('id', item.entity_id));
+            } else if (item.action === 'patch') {
+              // Partial column update on an EXISTING row (e.g. the 4f
+              // provenance backfill). Not an upsert: an upsert's INSERT
+              // half fails NOT NULL validation on the columns a partial
+              // payload omits, even when the row already exists.
+              ({ error } = await sb.from(table)
+                .update(item.payload)
                 .eq('id', item.entity_id));
             } else {
               ({ error } = await sb.from(table).upsert(row));
@@ -698,8 +716,10 @@
           persistSyncQueue();
         }
         console.log('[sync] queue drained.');
-      } finally {
-        syncFlushing = false;
+      } catch (err) {
+        // A flush attempt must never reject its awaiters — the queue
+        // survives and the next trigger retries.
+        console.error('[sync] flush error:', err.message || err);
       }
     }
 
@@ -742,6 +762,10 @@
       return isCloudUuid(huntId) ? huntId : null;
     }
 
+    // created_by rides along on every entity write: provenance only, never
+    // authority (user_id is stamped at flush time and RLS enforces it).
+    // HOSTED DEPENDENCY: the created_by columns exist only where the
+    // 20260816120000_created_by_provenance migration has been applied.
     function syncPinCreate(pin) {
       enqueueSync('pin', pin.id, 'create', {
         pin_type: cloudPinType(pin.type),
@@ -751,7 +775,8 @@
         note: pin.note || null,
         site_id: cloudSafeSiteId(pin.site_id),
         hunt_id: cloudSafeHuntId(pin.hunt_id),
-        created_at: pin.timestamp
+        created_at: pin.timestamp,
+        created_by: pin.created_by || null
       });
     }
 
@@ -763,7 +788,8 @@
         accuracy_meters: pin.accuracy != null && isFinite(pin.accuracy) ? pin.accuracy : null,
         note: pin.note || null,
         site_id: cloudSafeSiteId(pin.site_id),
-        hunt_id: cloudSafeHuntId(pin.hunt_id)
+        hunt_id: cloudSafeHuntId(pin.hunt_id),
+        created_by: pin.created_by || null
       });
     }
 
@@ -771,7 +797,8 @@
       enqueueSync('site', site.id, action || 'update', {
         name: site.name,
         polygon: site.polygon,
-        notes: site.notes || null
+        notes: site.notes || null,
+        created_by: site.created_by || null
       });
     }
 
@@ -784,7 +811,8 @@
         site_id: cloudSafeSiteId(hunt.site_id),
         points: Array.isArray(hunt.points) ? hunt.points : [],
         started_at: hunt.started_at,
-        ended_at: hunt.ended_at
+        ended_at: hunt.ended_at,
+        created_by: hunt.created_by || null
       };
     }
 
@@ -1295,7 +1323,8 @@
           polygon: s.polygon,
           name: s.name,
           notes: s.notes,
-          site_id: s.id
+          site_id: s.id,
+          created_by: s.created_by
         }));
 
         //    Pins: pin_type->type, accuracy_meters->accuracy, created_at->timestamp.
@@ -1308,7 +1337,8 @@
           timestamp: p.created_at,
           note: p.note,
           site_id: p.site_id,
-          hunt_id: p.hunt_id
+          hunt_id: p.hunt_id,
+          created_by: p.created_by
         }));
 
         //    Tracks split by kind (both use {lat,lng,t} points):
@@ -1328,7 +1358,8 @@
               site_id: t.site_id,
               started_at: t.started_at,
               ended_at: t.ended_at,
-              points: Array.isArray(t.points) ? t.points : []
+              points: Array.isArray(t.points) ? t.points : [],
+              created_by: t.created_by
             });
           }
         });
@@ -1572,7 +1603,8 @@
         timestamp: new Date().toISOString(),
         note: '',
         site_id: siteIdForCoords(lat, lng),
-        hunt_id: activeHunt ? activeHunt.id : null
+        hunt_id: activeHunt ? activeHunt.id : null,
+        created_by: username
       };
       state.pins.push(pin);
       save();
@@ -1651,10 +1683,458 @@
       updateCounts();
     });
 
+    /* ============================================================
+       Bite 4f — import/export against the cloud + legacy migration
+
+       One pipeline, two sources. "This device" reads the local state
+       (the path Burke actually uses — his legacy data exists only in
+       his phone's localStorage); "a file" reads a KnapScout export of
+       any version, v1 through v4. Both normalize into the same
+       canonical payload and run through the same plan/confirm/commit
+       path; only the source differs.
+
+       Identity is derived, never remembered: a non-UUID record gets
+       uuidv5(signed-in user id, natural key), so re-importing the
+       same physical record from any file, any number of times, in
+       any order, always converges on the same cloud row. Records
+       already in the cloud under a DIFFERENT id (the June migration
+       used random ids) are matched by natural key and reused, never
+       duplicated.
+    ============================================================ */
+
+    // RFC 4122 UUIDv5 (SHA-1, name-based). Namespaced on the signed-in
+    // user's id so two users importing the same file can never collide
+    // on primary keys (RLS would reject the second anyway — this keeps
+    // the ids honest rather than relying on the rejection).
+    async function uuidv5(namespaceUuid, name) {
+      const ns = namespaceUuid.replace(/-/g, '');
+      const bytes = new Uint8Array(16 + new TextEncoder().encode(name).length);
+      for (let i = 0; i < 16; i++) bytes[i] = parseInt(ns.substr(i * 2, 2), 16);
+      bytes.set(new TextEncoder().encode(name), 16);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-1', bytes));
+      hash[6] = (hash[6] & 0x0f) | 0x50;   // version 5
+      hash[8] = (hash[8] & 0x3f) | 0x80;   // RFC 4122 variant
+      const hex = Array.from(hash.slice(0, 16), b => b.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+    }
+
+    /* --- Natural keys: what makes two records "the same find" ---
+       Deliberately NOT the id string. The legacy corpus carries the
+       same physical pin as "p_x" in one file and "jason_p_x" in
+       another (the old import prefixed ids on every run), so ids are
+       untrustworthy; when-and-where is not. Timestamps are pushed
+       through Date→toISOString so the export dialect ("...Z") and the
+       PostgREST dialect ("...+00:00") produce identical keys. */
+    function canonTs(ts) {
+      if (ts == null) return null;
+      const d = new Date(ts);
+      return isNaN(d) ? null : d.toISOString();
+    }
+    // Coordinates enter keys at FIXED 9-decimal precision (~0.1mm), not
+    // full float precision: PostgREST serializes float8 at 15 significant
+    // digits while a JS export carries up to 17, so the same physical
+    // coordinate round-trips to a different string and full-precision
+    // keys never match their own cloud rows (verified live: every
+    // fixture pin re-imported as "new" before this rounding).
+    function coordKey(v) {
+      return Number(v).toFixed(9);
+    }
+    function pinNaturalKey(p) {
+      return canonTs(p.timestamp != null ? p.timestamp : p.created_at) +
+        '|' + coordKey(p.lat) + '|' + coordKey(p.lng);
+    }
+    function siteNaturalKey(s) {
+      return String(s.name == null ? '' : s.name).trim().toLowerCase();
+    }
+    function trackPtKey(pt) {
+      return canonTs(pt.t) + '|' + coordKey(pt.lat) + '|' + coordKey(pt.lng);
+    }
+
+    /* --- Normalize any export version (v1..v4) or the live device
+       state into one canonical payload shape. --- */
+    function normalizeImportPayload(raw, fallbackUsername) {
+      const un = (raw && typeof raw.username === 'string' && raw.username.trim())
+        ? raw.username.trim().toLowerCase()
+        : ((fallbackUsername || '').trim().toLowerCase() || null);
+      const arr = k => Array.isArray(raw && raw[k]) ? raw[k] : [];
+      const own = r => (typeof r.created_by === 'string' && r.created_by.trim())
+        ? r.created_by.trim().toLowerCase() : un;
+      return {
+        version: raw && raw.version,
+        username: un,
+        pins: arr('pins')
+          .filter(p => p && typeof p.lat === 'number' && typeof p.lng === 'number' && canonTs(p.timestamp))
+          .map(p => ({
+            id: p.id != null ? String(p.id) : null,
+            type: p.type === 'no-evidence' ? 'none' : p.type,  // tolerate cloud vocabulary
+            lat: p.lat, lng: p.lng,
+            accuracy: (p.accuracy != null && isFinite(p.accuracy)) ? p.accuracy : null,
+            timestamp: canonTs(p.timestamp),
+            note: typeof p.note === 'string' ? p.note : '',
+            site_id: p.site_id != null ? String(p.site_id) : null,
+            hunt_id: p.hunt_id != null ? String(p.hunt_id) : null,
+            created_by: own(p)
+          })),
+        sites: arr('sites')
+          .filter(s => s && s.id != null && s.name)
+          .map(s => ({
+            id: String(s.id),
+            name: String(s.name),
+            polygon: Array.isArray(s.polygon) ? s.polygon : [],
+            notes: typeof s.notes === 'string' ? s.notes : '',
+            created_by: own(s)
+          })),
+        hunts: arr('hunts')
+          .filter(h => h && h.id != null)
+          .map(h => ({
+            id: String(h.id),
+            site_id: h.site_id != null ? String(h.site_id) : null,
+            started_at: canonTs(h.started_at),
+            ended_at: canonTs(h.ended_at),
+            points: Array.isArray(h.points) ? h.points : [],
+            created_by: own(h)
+          })),
+        trackPoints: arr('track')
+          .filter(t => t && typeof t.lat === 'number' && typeof t.lng === 'number' && canonTs(t.t))
+          .map(t => ({ lat: t.lat, lng: t.lng, t: canonTs(t.t), created_by: own(t) }))
+      };
+    }
+
+    function buildDevicePayload() {
+      return {
+        version: state.version || 3,
+        username: ensureUsername(),
+        pins: state.pins,
+        track: state.track,
+        sites: state.sites,
+        hunts: state.hunts
+      };
+    }
+
+    /* --- Plan: everything is computed and reported BEFORE anything
+       is enqueued. Collisions are surfaced, never silently resolved
+       by overwrite. Returns {report, actions, mapped}; commit is a
+       separate, explicit step. --- */
+    async function planImport(payload) {
+      const { data: userData } = await sb.auth.getUser();
+      const user = userData && userData.user;
+      if (!user) throw new Error('sign in first — imported records need an owner');
+
+      const [sitesRes, pinsRes, tracksRes] = await Promise.all([
+        sb.from('sites').select('*').is('deleted_at', null),
+        sb.from('pins').select('*').is('deleted_at', null),
+        sb.from('tracks').select('*').is('deleted_at', null),
+      ]);
+      for (const r of [sitesRes, pinsRes, tracksRes]) if (r.error) throw r.error;
+      const cloudSites = sitesRes.data || [];
+      const cloudPins = pinsRes.data || [];
+      const cloudTracks = tracksRes.data || [];
+
+      const report = {
+        sites: { created: 0, matched: 0, backfilled: 0 },
+        pins:  { created: 0, matched: 0, backfilled: 0, payloadDuplicates: 0, unresolvedSiteRefs: 0, unresolvedHuntRefs: 0 },
+        hunts: { upserted: 0, skipped: 0 },
+        legacy: { pointsAdded: 0, pointsTotal: 0, rowId: null },
+        warnings: []
+      };
+      // Actions accumulate in FK-safe order — sites, then tracks (hunts +
+      // legacy), then pins — and the sync queue is FIFO, so a referenced
+      // row always lands before the row referencing it. Same shape as the
+      // startHunt fix.
+      const actions = [];
+
+      /* Sites: match existing by name, else derive id. */
+      const siteByKey = new Map(cloudSites.map(s => [siteNaturalKey(s), s]));
+      const knownSiteIds = new Set(cloudSites.map(s => s.id));
+      const siteIdMap = new Map();     // incoming raw id -> cloud id
+      const seenSiteKeys = new Map();  // payload-internal dedupe
+      const mappedSites = [];
+      for (const s of payload.sites) {
+        const key = siteNaturalKey(s);
+        const dup = seenSiteKeys.get(key);
+        if (dup) {
+          if (JSON.stringify(dup.polygon) !== JSON.stringify(s.polygon)) {
+            report.warnings.push(`site "${s.name}" appears twice with different boundaries — kept the first, skipped the second`);
+          }
+          siteIdMap.set(s.id, dup._cloudId);
+          continue;
+        }
+        const existing = siteByKey.get(key);
+        let cloudId;
+        if (existing) {
+          cloudId = existing.id;
+          report.sites.matched++;
+          if (existing.created_by == null && s.created_by) {
+            actions.push({ entity: 'site', id: cloudId, action: 'patch', payload: { created_by: s.created_by } });
+            report.sites.backfilled++;
+          }
+          // Matched sites are NOT overwritten: an import must never
+          // clobber a boundary edited after the export was taken.
+          if (JSON.stringify(existing.polygon) !== JSON.stringify(s.polygon)) {
+            report.warnings.push(`site "${s.name}" already exists with a different boundary — kept the cloud version`);
+          }
+          mappedSites.push({ id: cloudId, site_id: cloudId, name: existing.name, polygon: existing.polygon, notes: existing.notes, created_by: existing.created_by || s.created_by || null });
+        } else {
+          cloudId = isCloudUuid(s.id) ? s.id : await uuidv5(user.id, 'site|' + key);
+          actions.push({ entity: 'site', id: cloudId, action: 'create', payload: { name: s.name, polygon: s.polygon, notes: s.notes || null, created_by: s.created_by } });
+          report.sites.created++;
+          mappedSites.push({ id: cloudId, site_id: cloudId, name: s.name, polygon: s.polygon, notes: s.notes, created_by: s.created_by });
+        }
+        knownSiteIds.add(cloudId);
+        siteIdMap.set(s.id, cloudId);
+        s._cloudId = cloudId;
+        seenSiteKeys.set(key, s);
+      }
+      const resolveSiteId = rawId => {
+        if (rawId == null) return null;
+        if (siteIdMap.has(rawId)) return siteIdMap.get(rawId);
+        if (isCloudUuid(rawId) && knownSiteIds.has(rawId)) return rawId;
+        return undefined;   // unresolvable — caller decides and reports
+      };
+
+      /* Hunts: UUID ids pass through (v3+ hunts are born with them).
+         An unresolvable site link SKIPS the hunt rather than nulling
+         it — a site_id NULL track row would masquerade as the legacy
+         stream on the next load. */
+      const knownTrackIds = new Set(cloudTracks.map(t => t.id));
+      const mappedHunts = [];
+      for (const h of payload.hunts) {
+        const id = isCloudUuid(h.id) ? h.id : await uuidv5(user.id, 'hunt|' + h.id);
+        const siteId = resolveSiteId(h.site_id);
+        if (siteId == null) {   // null or undefined: no legal site to hang it on
+          report.hunts.skipped++;
+          report.warnings.push(`hunt ${h.id}: site reference "${h.site_id}" not found — hunt skipped (re-import after its site exists)`);
+          continue;
+        }
+        const started = h.started_at || (h.points.length ? canonTs(h.points[0].t) : null);
+        if (!started) {
+          report.hunts.skipped++;
+          report.warnings.push(`hunt ${h.id} has no start time and no points — skipped`);
+          continue;
+        }
+        actions.push({ entity: 'track', id, action: 'create', payload: { site_id: siteId, points: h.points, started_at: started, ended_at: h.ended_at, created_by: h.created_by } });
+        knownTrackIds.add(id);
+        report.hunts.upserted++;
+        mappedHunts.push({ id, site_id: siteId, created_by: h.created_by, started_at: started, ended_at: h.ended_at, points: h.points });
+      }
+
+      /* Legacy track stream: exactly ONE site_id-NULL row per user.
+         Points are unioned into the existing row (never overwritten —
+         a 63-point export must not truncate the 3,119-point stream),
+         new points are added, nothing is dropped. */
+      let mappedTrack = null;
+      if (payload.trackPoints.length) {
+        const legacyRows = cloudTracks
+          .filter(t => t.site_id == null)
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+        if (legacyRows.length > 1) {
+          report.warnings.push(`${legacyRows.length} legacy track rows exist in the cloud — merging into the oldest`);
+        }
+        const target = legacyRows[0] || null;
+        const byKey = new Map((target && Array.isArray(target.points) ? target.points : []).map(pt => [trackPtKey(pt), pt]));
+        let added = 0;
+        for (const pt of payload.trackPoints) {
+          const k = trackPtKey(pt);
+          if (!byKey.has(k)) { byKey.set(k, pt); added++; }
+        }
+        const merged = Array.from(byKey.values()).sort((a, b) => String(a.t).localeCompare(String(b.t)));
+        const id = target ? target.id : await uuidv5(user.id, 'track|legacy');
+        report.legacy.pointsAdded = added;
+        report.legacy.pointsTotal = merged.length;
+        report.legacy.rowId = id;
+        const needBackfill = target && target.created_by == null && payload.username;
+        if (added > 0 || !target || needBackfill) {
+          actions.push({ entity: 'track', id, action: 'create', payload: {
+            site_id: null,
+            points: merged,
+            started_at: target ? target.started_at : merged[0].t,
+            ended_at: target ? target.ended_at : merged[merged.length - 1].t,
+            created_by: (target && target.created_by) || payload.username || null
+          } });
+          knownTrackIds.add(id);
+        }
+        mappedTrack = merged;
+      }
+
+      /* Pins: match existing by natural key, else derive. Matched pins
+         are backfilled with provenance only, never overwritten. */
+      const pinByKey = new Map(cloudPins.map(p => [pinNaturalKey(p), p]));
+      const seenPinKeys = new Set();
+      const mappedPins = [];
+      for (const p of payload.pins) {
+        const key = pinNaturalKey(p);
+        if (seenPinKeys.has(key)) { report.pins.payloadDuplicates++; continue; }
+        seenPinKeys.add(key);
+        const existing = pinByKey.get(key);
+        if (existing) {
+          report.pins.matched++;
+          if (existing.created_by == null && p.created_by) {
+            actions.push({ entity: 'pin', id: existing.id, action: 'patch', payload: { created_by: p.created_by } });
+            report.pins.backfilled++;
+          }
+          mappedPins.push({
+            id: existing.id,
+            type: existing.pin_type === 'no-evidence' ? 'none' : existing.pin_type,
+            lat: existing.lat, lng: existing.lng,
+            accuracy: existing.accuracy_meters,
+            timestamp: canonTs(existing.created_at),
+            note: existing.note,
+            site_id: existing.site_id,
+            hunt_id: existing.hunt_id,
+            created_by: existing.created_by || p.created_by || null
+          });
+          continue;
+        }
+        let siteId = resolveSiteId(p.site_id);
+        if (siteId === undefined) { report.pins.unresolvedSiteRefs++; siteId = null; }
+        let huntId = null;
+        if (p.hunt_id != null) {
+          if (isCloudUuid(p.hunt_id) && knownTrackIds.has(p.hunt_id)) huntId = p.hunt_id;
+          else report.pins.unresolvedHuntRefs++;
+        }
+        const id = isCloudUuid(p.id) ? p.id : await uuidv5(user.id, 'pin|' + key);
+        actions.push({ entity: 'pin', id, action: 'create', payload: {
+          pin_type: cloudPinType(p.type),
+          lat: p.lat, lng: p.lng,
+          accuracy_meters: p.accuracy,
+          note: p.note || null,
+          site_id: siteId,
+          hunt_id: huntId,
+          created_at: p.timestamp,
+          created_by: p.created_by
+        } });
+        report.pins.created++;
+        mappedPins.push({ id, type: p.type, lat: p.lat, lng: p.lng, accuracy: p.accuracy, timestamp: p.timestamp, note: p.note, site_id: siteId, hunt_id: huntId, created_by: p.created_by });
+      }
+
+      return { report, actions, mapped: { sites: mappedSites, hunts: mappedHunts, pins: mappedPins, track: mappedTrack, siteIdMap } };
+    }
+
+    /* --- Commit: hand the planned actions to the existing sync queue
+       (FIFO preserves the sites→tracks→pins ordering) and flush. --- */
+    function commitImportActions(actions) {
+      for (const a of actions) enqueueSync(a.entity, a.id, a.action, a.payload);
+      return flushSyncQueue();
+    }
+
+    /* --- Reconcile local state with what was just imported: the
+       cloud-id version of a record replaces any local twin living
+       under an older id (matched by natural key, same as the plan). --- */
+    function applyImportToState(mapped) {
+      const siteKeys = new Set(mapped.sites.map(siteNaturalKey));
+      state.sites = mapped.sites.concat(state.sites.filter(s => !siteKeys.has(siteNaturalKey(s))));
+      const pinKeys = new Set(mapped.pins.map(pinNaturalKey));
+      state.pins = mapped.pins.concat(state.pins.filter(p => !pinKeys.has(pinNaturalKey(p))));
+      const huntIds = new Set(mapped.hunts.map(h => h.id));
+      state.hunts = mapped.hunts.concat(state.hunts.filter(h => !huntIds.has(h.id)));
+      if (mapped.track) state.track = mapped.track;
+      // Surviving local records may still point at a remapped site id.
+      for (const p of state.pins) {
+        if (p.site_id != null && mapped.siteIdMap.has(p.site_id)) p.site_id = mapped.siteIdMap.get(p.site_id);
+      }
+      for (const h of state.hunts) {
+        if (h.site_id != null && mapped.siteIdMap.has(h.site_id)) h.site_id = mapped.siteIdMap.get(h.site_id);
+      }
+      save();
+      sitePolygonLayers.forEach(l => map.removeLayer(l));
+      sitePolygonLayers.clear();
+      state.sites.forEach(renderSitePolygon);
+      renderAllPins();
+      redrawTrack();
+      redrawHunts();
+      updateCounts();
+      refreshSiteFilter();
+    }
+
+    function importSummaryLines(report) {
+      const lines = [
+        `Sites: ${report.sites.created} new, ${report.sites.matched} already in the cloud`,
+        `Pins: ${report.pins.created} new, ${report.pins.matched} already in the cloud` +
+          (report.pins.payloadDuplicates ? `, ${report.pins.payloadDuplicates} duplicate(s) in the file collapsed` : ''),
+        `Hunts: ${report.hunts.upserted} to write` + (report.hunts.skipped ? `, ${report.hunts.skipped} skipped` : ''),
+      ];
+      if (report.legacy.rowId) {
+        lines.push(`Legacy track: +${report.legacy.pointsAdded} point(s), ${report.legacy.pointsTotal} total in one row`);
+      }
+      if (report.sites.backfilled || report.pins.backfilled) {
+        lines.push(`Provenance backfill: ${report.sites.backfilled} site(s), ${report.pins.backfilled} pin(s)`);
+      }
+      if (report.pins.unresolvedSiteRefs) lines.push(`⚠ ${report.pins.unresolvedSiteRefs} pin(s) reference a site that doesn't exist — importing as Unsorted`);
+      if (report.pins.unresolvedHuntRefs) lines.push(`⚠ ${report.pins.unresolvedHuntRefs} pin(s) reference a hunt that doesn't exist — importing without the hunt link`);
+      for (const w of report.warnings) lines.push('⚠ ' + w);
+      return lines;
+    }
+
+    async function runImportFlow(rawPayload, sourceLabel, fallbackUsername) {
+      let plan;
+      try {
+        plan = await planImport(normalizeImportPayload(rawPayload, fallbackUsername));
+      } catch (err) {
+        alert('Import failed: ' + (err.message || err));
+        return;
+      }
+      const ok = await confirmModal({
+        title: `Import from ${sourceLabel}?`,
+        message: importSummaryLines(plan.report).join('\n'),
+        okLabel: 'Import',
+        cancelLabel: 'Cancel',
+        destructive: false
+      });
+      if (!ok) return;
+      applyImportToState(plan.mapped);
+      await commitImportActions(plan.actions);
+      const leftover = syncQueue.length;
+      alert(leftover === 0
+        ? 'Import complete — everything is in the cloud.'
+        : `Import queued — ${leftover} item(s) still uploading in the background.`);
+    }
+
     /* Export ------------------------------------------------- */
-    document.getElementById('export-btn').addEventListener('click', async () => {
-      if (drawMode || editMode) return;
-      const payload = {
+    // Signed in: a complete restorable v4 snapshot of the user's CLOUD
+    // data, fetched fresh. Signed out: the v3 local-state export,
+    // unchanged, so the pre-cloud path keeps working.
+    async function buildCloudExportPayload() {
+      const { data: userData } = await sb.auth.getUser();
+      if (!userData || !userData.user) return null;
+      const [sitesRes, pinsRes, tracksRes] = await Promise.all([
+        sb.from('sites').select('*').is('deleted_at', null),
+        sb.from('pins').select('*').is('deleted_at', null),
+        sb.from('tracks').select('*').is('deleted_at', null),
+      ]);
+      if (sitesRes.error || pinsRes.error || tracksRes.error) return null;
+      let track = [];
+      const hunts = [];
+      (tracksRes.data || []).forEach(t => {
+        if (t.site_id == null) {
+          if (Array.isArray(t.points)) track = track.concat(t.points);
+        } else {
+          hunts.push({ id: t.id, site_id: t.site_id, created_by: t.created_by, started_at: canonTs(t.started_at), ended_at: canonTs(t.ended_at), points: Array.isArray(t.points) ? t.points : [] });
+        }
+      });
+      return {
+        version: 4,
+        source: 'cloud',
+        username,
+        exported_at: new Date().toISOString(),
+        sites: (sitesRes.data || []).map(s => ({ id: s.id, site_id: s.id, name: s.name, polygon: s.polygon, notes: s.notes, created_by: s.created_by })),
+        pins: (pinsRes.data || []).map(p => ({
+          id: p.id,
+          type: p.pin_type === 'no-evidence' ? 'none' : p.pin_type,
+          lat: p.lat, lng: p.lng,
+          accuracy: p.accuracy_meters,
+          timestamp: canonTs(p.created_at),
+          note: p.note,
+          site_id: p.site_id,
+          hunt_id: p.hunt_id,
+          created_by: p.created_by
+        })),
+        hunts,
+        track
+      };
+    }
+
+    function buildLocalExportPayload() {
+      return {
         version: 3,
         started: state.started,
         username,
@@ -1676,6 +2156,11 @@
         })),
         exported_at: new Date().toISOString()
       };
+    }
+
+    document.getElementById('export-btn').addEventListener('click', async () => {
+      if (drawMode || editMode) return;
+      const payload = (await buildCloudExportPayload()) || buildLocalExportPayload();
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
       const today = new Date().toISOString().slice(0, 10);
       const filename = `knapscout_${username}_${today}.json`;
@@ -1701,9 +2186,46 @@
     });
 
     /* Import ------------------------------------------------- */
-    document.getElementById('import-btn').addEventListener('click', () => {
+    /* Two sources, one pipeline. "This device" is the migration path
+       for anyone whose pre-cloud data lives only in this browser's
+       localStorage (Burke's phone); "a file" takes any KnapScout
+       export, v1 through v4. */
+    function importSourceModal() {
+      return new Promise(resolve => {
+        const modal = document.getElementById('confirm-modal');
+        const card = modal.querySelector('.modal-card');
+        const oldHtml = card.innerHTML;
+        card.innerHTML = `
+          <div class="modal-title">Import from…</div>
+          <div class="modal-message">Move data into your cloud account.</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+            <button class="modal-cancel" type="button" id="import-src-device" style="padding:10px;text-align:left;">This device — migrate the data already on this phone/browser</button>
+            <button class="modal-cancel" type="button" id="import-src-file" style="padding:10px;text-align:left;">A file — a KnapScout export (any version)</button>
+          </div>
+          <div class="modal-buttons">
+            <button class="modal-cancel" type="button" id="import-src-cancel">Cancel</button>
+          </div>
+        `;
+        function cleanup(val) {
+          card.innerHTML = oldHtml;
+          modal.hidden = true;
+          resolve(val);
+        }
+        document.getElementById('import-src-device').addEventListener('click', () => cleanup('device'));
+        document.getElementById('import-src-file').addEventListener('click', () => cleanup('file'));
+        document.getElementById('import-src-cancel').addEventListener('click', () => cleanup(null));
+        modal.hidden = false;
+      });
+    }
+
+    document.getElementById('import-btn').addEventListener('click', async () => {
       if (drawMode || editMode) return;
-      document.getElementById('import-file').click();
+      const choice = await importSourceModal();
+      if (choice === 'file') {
+        document.getElementById('import-file').click();
+      } else if (choice === 'device') {
+        await runImportFlow(buildDevicePayload(), 'this device', ensureUsername());
+      }
     });
 
     document.getElementById('import-file').addEventListener('change', async (ev) => {
@@ -1714,126 +2236,28 @@
 
       let imported;
       try {
-        const text = await file.text();
-        imported = JSON.parse(text);
+        imported = JSON.parse(await file.text());
       } catch (err) {
         alert('Could not read file. Make sure it is a valid KnapScout export.');
         return;
       }
-
-      let sourceUsername = ((imported && imported.username) || '').trim().toLowerCase();
-      if (!sourceUsername) {
-        const entered = prompt('What name should we tag these pins with? (e.g. burke)');
-        sourceUsername = (entered || '').trim().toLowerCase();
-        if (!sourceUsername) {
-          alert('Import cancelled.');
-          return;
-        }
-      }
-
-      const importedPins = Array.isArray(imported.pins) ? imported.pins : [];
-      const importedTracks = Array.isArray(imported.track) ? imported.track : [];
-      const importedSites = Array.isArray(imported.sites) ? imported.sites : [];
-      const importedHunts = Array.isArray(imported.hunts) ? imported.hunts : [];
-
-      const ok = await confirmModal({
-        title: `Import from ${sourceUsername}?`,
-        message: `Import ${importedPins.length} pin(s), ${importedTracks.length} track point(s), ${importedHunts.length} hunt(s), and ${importedSites.length} site(s)?`,
-        okLabel: 'Import',
-        cancelLabel: 'Cancel',
-        destructive: false
-      });
-      if (!ok) return;
-
-      /* Snapshot the current user's pre-import sites — pins
-         will be checked against THESE polygons (not the imported ones). */
-      const currentSitesSnapshot = state.sites.slice();
-
-      /* Site ID remap: incoming site IDs get prefixed with sourceUsername */
-      const siteIdMap = new Map();   // imported.id -> tagged.id
-      for (const s of importedSites) {
-        const newId = `${sourceUsername}_${s.id}`;
-        siteIdMap.set(s.id, newId);
-      }
-
-      /* Pin import with site_id override logic */
-      const pinIndex = new Map(state.pins.map((p, i) => [p.id, i]));
-      for (const p of importedPins) {
-        const newId = `${sourceUsername}_${p.id}`;
-        const importedSiteId = (p && 'site_id' in p) ? p.site_id : null;
-        const importedSiteIdRemapped = importedSiteId ? (siteIdMap.get(importedSiteId) || `${sourceUsername}_${importedSiteId}`) : null;
-        /* Auto-associate to current user's site if pin falls within one */
-        const currentSiteMatch = (p && typeof p.lat === 'number' && typeof p.lng === 'number')
-          ? siteIdForCoords(p.lat, p.lng, currentSitesSnapshot)
-          : null;
-        const finalSiteId = currentSiteMatch != null ? currentSiteMatch : importedSiteIdRemapped;
-        const tagged = {
-          ...p,
-          id: newId,
-          created_by: p.created_by || sourceUsername,
-          site_id: finalSiteId,
-          hunt_id: ('hunt_id' in p) ? p.hunt_id : null
-        };
-        if (pinIndex.has(newId)) state.pins[pinIndex.get(newId)] = tagged;
-        else { pinIndex.set(newId, state.pins.length); state.pins.push(tagged); }
-      }
-
-      /* Track import (unchanged behaviour, dedupe by created_by + timestamp) */
-      const trackKey = (t) => `${t.created_by || ''}|${t.t || ''}`;
-      const trackSeen = new Set(state.track.map(trackKey));
-      for (const t of importedTracks) {
-        const tagged = { ...t, created_by: t.created_by || sourceUsername };
-        const key = trackKey(tagged);
-        if (!trackSeen.has(key)) { trackSeen.add(key); state.track.push(tagged); }
-      }
-
-      /* Site import — remap IDs, append (skip if already present) */
-      const existingSiteIds = new Set(state.sites.map(s => s.id));
-      let importedSiteCount = 0;
-      for (const s of importedSites) {
-        const newId = siteIdMap.get(s.id);
-        if (existingSiteIds.has(newId)) continue;
-        const tagged = {
-          ...s,
-          id: newId,
-          created_by: s.created_by || sourceUsername,
-          notes: typeof s.notes === 'string' ? s.notes : '',
-          polygon: Array.isArray(s.polygon) ? s.polygon : []
-        };
-        state.sites.push(tagged);
-        renderSitePolygon(tagged);
-        importedSiteCount++;
-      }
-
-      /* Hunt import — hunts carry stable ids (UUIDs), so mergeById keys
-         cleanly with no prefixing. Pins reference hunt ids verbatim, so
-         leaving hunt ids un-prefixed keeps the pin->hunt link intact.
-         Older exports with no hunts key arrive as [] and no-op here.
-
-         DRIFT (intentional, not yet handled): a hunt's site_id is preserved
-         verbatim, but imported sites get their ids prefixed (siteIdMap above).
-         So an imported hunt's site_id will NOT match the prefixed imported
-         site id. This is benign today because nothing looks hunts up by site
-         (redrawHunts only draws points). Once hunts are filtered or grouped by
-         site, hunt.site_id must be run through siteIdMap here on import. */
-      const normalizedHunts = importedHunts.map(h => ({
-        id: h.id,
-        site_id: h.site_id != null ? h.site_id : null,
-        created_by: h.created_by || sourceUsername,
-        started_at: h.started_at || null,
-        ended_at: h.ended_at || null,
-        points: Array.isArray(h.points) ? h.points : []
-      })).filter(h => h.id != null);
-      const huntCountBefore = state.hunts.length;
-      state.hunts = mergeById(normalizedHunts, state.hunts);
-      const importedHuntCount = state.hunts.length - huntCountBefore;
-
-      save();
-      renderAllPins();
-      redrawHunts();
-      refreshSiteFilter();
-      alert(`Imported ${importedPins.length} pin(s), ${importedTracks.length} track point(s), ${importedHuntCount} hunt(s), and ${importedSiteCount} site(s) from ${sourceUsername}.`);
+      // Untagged records (the earliest exports carry no username) fall
+      // back to this device's name; the pre-import summary shows what
+      // will be written, so the tagging is visible, not silent.
+      const sourceLabel = ((imported && imported.username) || '').trim() || file.name;
+      await runImportFlow(imported, sourceLabel, ensureUsername());
     });
+
+    /* Test seam: lets a headless session drive the exact production
+       pipeline (normalize -> plan -> commit -> reconcile) without the
+       file picker or modals. UI flows above use the same functions. */
+    window.__ks4f = {
+      uuidv5, canonTs, pinNaturalKey, siteNaturalKey, trackPtKey,
+      normalizeImportPayload, buildDevicePayload, planImport,
+      commitImportActions, applyImportToState, buildCloudExportPayload,
+      flush: flushSyncQueue,
+      queueLength: () => syncQueue.length
+    };
 
     /* Filter dropdown -------------------------------------- */
     function refreshSiteFilter() {
