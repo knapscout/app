@@ -196,7 +196,9 @@ password_requirements = ""
 
 [auth.rate_limit]
 # Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
-email_sent = 2
+# (Local dev: raised from the default 2 — OTP sign-in testing burns through that
+# immediately. Hosted keeps its own limit; this file only configures the local stack.)
+email_sent = 50
 # Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
 sms_sent = 30
 # Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
@@ -247,6 +249,13 @@ otp_expiry = 3600
 # [auth.email.template.invite]
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
+
+# Sign-in email carries the 6-digit OTP ({{ .Token }}) because the app's
+# sign-in panel asks for a code, not a link — mirrors the hosted project's
+# customized template so the local stack exercises the same flow.
+[auth.email.template.magic_link]
+subject = "Your KnapScout sign-in code"
+content_path = "./supabase/templates/magic_link.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

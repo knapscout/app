@@ -522,14 +522,257 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // --- KnapScout cloud connection (Bite 4) ---
-    // Publishable/anon key only. Safe in client code; protected by RLS.
+    // Publishable/anon keys only. Safe in client code; protected by RLS.
     // The secret key NEVER goes here.
-    const SUPABASE_URL = 'https://rgyeyzlwdlqiwlfgbxle.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_DNuhW2ZSTpz4jU-BV-mtYw_9uzCT-RO';
+    //
+    // Environment registry. 'prod' is hosted knapscout-prod; 'local' is the
+    // developer stack started by `supabase start` (its publishable key is the
+    // CLI's standard local development key, not a secret).
+    const SUPABASE_ENVS = {
+      prod: {
+        url: 'https://rgyeyzlwdlqiwlfgbxle.supabase.co',
+        anonKey: 'sb_publishable_DNuhW2ZSTpz4jU-BV-mtYw_9uzCT-RO'
+      },
+      local: {
+        url: 'http://127.0.0.1:54321',
+        anonKey: 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH'
+      }
+    };
+
+    // Resolution order:
+    //   1. ?env=<name> in the URL (also persisted for subsequent loads)
+    //   2. previously persisted choice in localStorage
+    //   3. hostname default: localhost/127.0.0.1 -> local, anything else -> prod
+    // An invalid persisted/query value falls through to the hostname default.
+    const SUPABASE_ENV_KEY = 'knapscout_env';
+    function resolveSupabaseEnv() {
+      const fromQuery = new URLSearchParams(location.search).get('env');
+      if (fromQuery && SUPABASE_ENVS[fromQuery]) {
+        localStorage.setItem(SUPABASE_ENV_KEY, fromQuery);
+        return fromQuery;
+      }
+      const stored = localStorage.getItem(SUPABASE_ENV_KEY);
+      if (stored && SUPABASE_ENVS[stored]) return stored;
+      const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
+      return isLocalHost ? 'local' : 'prod';
+    }
+
+    const SUPABASE_ENV = resolveSupabaseEnv();
+    const SUPABASE_URL = SUPABASE_ENVS[SUPABASE_ENV].url;
+    const SUPABASE_ANON_KEY = SUPABASE_ENVS[SUPABASE_ENV].anonKey;
+    console.log('[cloud] environment: ' + SUPABASE_ENV + ' (' + SUPABASE_URL + ')');
 
     // The CDN library exposes a global called `supabase`.
     // We create our own client and call it `sb`.
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  </script>
+  <script>
+    /* ------------------------------------------------------------
+       KnapScout sync layer (Bite 4c-4e): local-first write queue.
+
+       Every cloud-bound change is written to local state first (the
+       existing save() path, untouched), then enqueued here and pushed
+       in the background. The queue survives reloads in localStorage.
+       Pushes are upserts keyed on id, so retries are idempotent and
+       conflict policy is last-write-wins, matching the Bite 4 design.
+
+       Only entities with UUID ids sync. Legacy local ids (pins like
+       "p_m9x...", import-prefixed "jason_..." ids) are left local-only;
+       they belong to the migration bite, not the write path.
+    ------------------------------------------------------------ */
+
+    const SYNC_QUEUE_KEY = 'knapscout_sync_queue_v1';
+    const SYNC_DEAD_KEY  = 'knapscout_sync_dead_v1';
+    const DEVICE_ID_KEY  = 'knapscout_device_id';
+    const SYNC_MAX_ATTEMPTS = 3;
+
+    function getDeviceId() {
+      let d = localStorage.getItem(DEVICE_ID_KEY);
+      if (!d) {
+        d = crypto.randomUUID();
+        localStorage.setItem(DEVICE_ID_KEY, d);
+      }
+      return d;
+    }
+
+    function isCloudUuid(v) {
+      return typeof v === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    }
+
+    let syncQueue = [];
+    try { syncQueue = JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY) || '[]'); } catch (_) {}
+    if (!Array.isArray(syncQueue)) syncQueue = [];
+
+    function persistSyncQueue() {
+      localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(syncQueue));
+    }
+
+    function clearSyncQueue() {
+      syncQueue = [];
+      persistSyncQueue();
+    }
+
+    /* payload is the full row snapshot (minus user_id, stamped at flush
+       time from the live session) for 'create'/'update'. */
+    function enqueueSync(entityType, entityId, action, payload) {
+      if (!isCloudUuid(entityId)) return;   // legacy ids stay local-only
+      syncQueue.push({
+        entity_type: entityType,
+        entity_id: entityId,
+        action,
+        payload: payload || {},
+        client_timestamp: new Date().toISOString(),
+        attempts: 0
+      });
+      persistSyncQueue();
+      scheduleSyncFlush();
+    }
+
+    function deadLetter(item, reason) {
+      console.error('[sync] giving up on', item.entity_type, item.entity_id, item.action, '—', reason);
+      let dead = [];
+      try { dead = JSON.parse(localStorage.getItem(SYNC_DEAD_KEY) || '[]'); } catch (_) {}
+      dead.push({ ...item, failed_reason: String(reason), failed_at: new Date().toISOString() });
+      localStorage.setItem(SYNC_DEAD_KEY, JSON.stringify(dead));
+    }
+
+    let syncFlushing = false;
+    async function flushSyncQueue() {
+      if (syncFlushing || syncQueue.length === 0) return;
+      if (!navigator.onLine) return;
+      syncFlushing = true;
+      try {
+        const { data: userData } = await sb.auth.getUser();
+        const user = userData && userData.user;
+        if (!user) return;   // queue waits for sign-in
+
+        while (syncQueue.length > 0) {
+          const item = syncQueue[0];
+          const table = item.entity_type + 's';   // pin->pins, site->sites, track->tracks
+          const row = { id: item.entity_id, user_id: user.id, ...item.payload };
+          let error = null;
+          try {
+            if (item.action === 'delete') {
+              // Soft delete: the row survives, deleted_at marks it.
+              ({ error } = await sb.from(table)
+                .update({ deleted_at: new Date().toISOString() })
+                .eq('id', item.entity_id));
+            } else {
+              ({ error } = await sb.from(table).upsert(row));
+            }
+          } catch (netErr) {
+            // Transport failure — stop, keep the queue, retry on the next trigger.
+            console.log('[sync] offline or unreachable, will retry:', netErr.message || netErr);
+            return;
+          }
+
+          if (error) {
+            item.attempts = (item.attempts || 0) + 1;
+            if (item.attempts >= SYNC_MAX_ATTEMPTS) {
+              syncQueue.shift();
+              deadLetter(item, error.message || error.code || 'unknown error');
+            }
+            persistSyncQueue();
+            if (item.attempts < SYNC_MAX_ATTEMPTS) return;  // retry this item later
+            continue;                                        // dead-lettered, move on
+          }
+
+          // Entity write landed — best-effort audit entry. A sync_log failure
+          // never blocks the queue; it only costs audit fidelity.
+          try {
+            const { error: logErr } = await sb.from('sync_log').insert({
+              user_id: user.id,
+              device_id: getDeviceId(),
+              entity_type: item.entity_type,
+              entity_id: item.entity_id,
+              action: item.action,
+              client_timestamp: item.client_timestamp
+            });
+            if (logErr) console.error('[sync] sync_log insert failed:', logErr.message);
+          } catch (e) {
+            console.error('[sync] sync_log insert failed:', e.message || e);
+          }
+
+          syncQueue.shift();
+          persistSyncQueue();
+        }
+        console.log('[sync] queue drained.');
+      } finally {
+        syncFlushing = false;
+      }
+    }
+
+    let syncFlushTimer = null;
+    function scheduleSyncFlush() {
+      if (syncFlushTimer) return;
+      syncFlushTimer = setTimeout(() => {
+        syncFlushTimer = null;
+        flushSyncQueue();
+      }, 50);
+    }
+
+    window.addEventListener('online', scheduleSyncFlush);
+    setInterval(() => { if (syncQueue.length > 0) flushSyncQueue(); }, 30000);
+
+    /* --- Entity translators: app shape -> cloud row (no id/user_id) --- */
+
+    // App pin types are none/evidence/find; the cloud vocabulary spells the
+    // first one 'no-evidence' (see loadFromCloud's reverse mapping).
+    function cloudPinType(appType) {
+      return appType === 'none' ? 'no-evidence' : appType;
+    }
+
+    // A site_id is only safe to send if it could exist in the cloud (UUID).
+    // A pin inside a legacy/import-prefixed site keeps that link locally but
+    // uploads unassigned; the migration bite owns reconciling those.
+    function cloudSafeSiteId(siteId) {
+      return isCloudUuid(siteId) ? siteId : null;
+    }
+
+    function syncPinCreate(pin) {
+      enqueueSync('pin', pin.id, 'create', {
+        pin_type: cloudPinType(pin.type),
+        lat: pin.lat,
+        lng: pin.lng,
+        accuracy_meters: pin.accuracy != null && isFinite(pin.accuracy) ? pin.accuracy : null,
+        note: pin.note || null,
+        site_id: cloudSafeSiteId(pin.site_id),
+        created_at: pin.timestamp
+      });
+    }
+
+    function syncPinUpdate(pin) {
+      enqueueSync('pin', pin.id, 'update', {
+        pin_type: cloudPinType(pin.type),
+        lat: pin.lat,
+        lng: pin.lng,
+        accuracy_meters: pin.accuracy != null && isFinite(pin.accuracy) ? pin.accuracy : null,
+        note: pin.note || null,
+        site_id: cloudSafeSiteId(pin.site_id)
+      });
+    }
+
+    function syncSiteSave(site, action) {
+      enqueueSync('site', site.id, action || 'update', {
+        name: site.name,
+        polygon: site.polygon,
+        notes: site.notes || null
+      });
+    }
+
+    function syncSiteDelete(siteId) {
+      enqueueSync('site', siteId, 'delete');
+    }
+
+    function syncTrackCreate(hunt) {
+      enqueueSync('track', hunt.id, 'create', {
+        site_id: cloudSafeSiteId(hunt.site_id),
+        points: Array.isArray(hunt.points) ? hunt.points : [],
+        started_at: hunt.started_at,
+        ended_at: hunt.ended_at
+      });
+    }
   </script>
   <script>
     /* ------------------------------------------------------------
@@ -594,6 +837,7 @@
         state.hunts.push(ah);
         state.activeHunt = null;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        syncTrackCreate(ah);   // recovered hunt still becomes a cloud track
       }
     }
     state.version = 3;
@@ -781,7 +1025,11 @@
       let changed = 0;
       for (const p of state.pins) {
         const newId = siteIdForCoords(p.lat, p.lng);
-        if (p.site_id !== newId) { p.site_id = newId; changed++; }
+        if (p.site_id !== newId) {
+          p.site_id = newId;
+          changed++;
+          syncPinUpdate(p);   // no-op for legacy (non-UUID) pin ids
+        }
       }
       if (changed > 0) save();
       return changed;
@@ -901,6 +1149,7 @@
         btn.addEventListener('click', () => {
           pin.note = ta.value;
           save();
+          syncPinUpdate(pin);
           btn.textContent = 'Saved ✓';
           setTimeout(() => marker.closePopup(), 500);
         });
@@ -1034,11 +1283,26 @@
           site_id: p.site_id
         }));
 
-        //    Track: app stores points as {lat,lng,t}; cloud points already use {lat,lng,t}.
-        //    Combine all track rows' points into one flat array (we have 1 row today).
+        //    Tracks split by kind (both use {lat,lng,t} points):
+        //    - site_id NULL: the legacy pre-hunt migration stream. Flattened into
+        //      state.track, which is kept but not drawn (Bite 1 residue).
+        //    - site_id set: a session-gated hunt (startHunt always requires a
+        //      site, so every real hunt row is site-tagged). Mapped into
+        //      state.hunts so walks render per-session on every device.
         let track = [];
+        const cloudHunts = [];
         cloudTracks.forEach(t => {
-          if (Array.isArray(t.points)) track = track.concat(t.points);
+          if (t.site_id == null) {
+            if (Array.isArray(t.points)) track = track.concat(t.points);
+          } else {
+            cloudHunts.push({
+              id: t.id,
+              site_id: t.site_id,
+              started_at: t.started_at,
+              ended_at: t.ended_at,
+              points: Array.isArray(t.points) ? t.points : []
+            });
+          }
         });
 
         // 5. Replace state, persist to local cache, re-render from scratch.
@@ -1046,8 +1310,10 @@
         // in-app that were never pushed to the cloud) so a cloud load can't wipe them.
         const localSites = state.sites || [];
         const localPins  = state.pins  || [];
+        const localHunts = state.hunts || [];
         state.sites = mergeById(sites, localSites, { preferNewer: true });
         state.pins  = mergeById(pins,  localPins);   // pins have no updated_at — union by id
+        state.hunts = mergeById(cloudHunts, localHunts);  // hunts are append-only — union by id
         state.track = track;
         save();  // align localStorage cache with the cloud copy
 
@@ -1068,7 +1334,12 @@
         refreshSiteFilter();
 
         console.log('[cloud] loaded ' + sites.length + ' sites, ' + pins.length +
-                    ' pins, ' + track.length + ' track points from cloud.');
+                    ' pins, ' + cloudHunts.length + ' hunts, ' + track.length +
+                    ' legacy track points from cloud.');
+
+        // Signed in and freshly loaded — good moment to push anything queued
+        // while offline or signed out.
+        flushSyncQueue();
       } catch (err) {
         // Any failure: leave the existing local view intact.
         console.error('[cloud] load failed — keeping local data:', err.message || err);
@@ -1264,7 +1535,9 @@
 
       const lat = currentPosition.lat, lng = currentPosition.lng;
       const pin = {
-        id: 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+        // UUID so the pin can carry the same id locally and in the cloud.
+        // (Old "p_..." ids predate the write path and stay local-only.)
+        id: crypto.randomUUID(),
         type,
         lat, lng,
         accuracy: currentPosition.accuracy,
@@ -1275,6 +1548,7 @@
       };
       state.pins.push(pin);
       save();
+      syncPinCreate(pin);
       addPinToMap(pin);
       if (navigator.vibrate) navigator.vibrate(30);
     }
@@ -1332,6 +1606,9 @@
         show_boundaries: state.show_boundaries
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // Clear is a LOCAL wipe: drop pending pushes so already-cleared entities
+      // don't sync afterwards. Cloud rows are untouched (and will re-load).
+      clearSyncQueue();
       for (const m of pinMarkers.values()) map.removeLayer(m);
       pinMarkers.clear();
       trackLine.setLatLngs([]);
@@ -1593,6 +1870,7 @@
       if (!activeHunt) return;
       activeHunt.ended_at = new Date().toISOString();
       state.hunts.push(activeHunt);
+      syncTrackCreate(activeHunt);   // a completed hunt is a cloud track row
       activeHunt = null;
       state.activeHunt = null;
       const btn = document.getElementById('hunt-btn');
@@ -1704,6 +1982,7 @@
           s.name = v;
           s.updated_at = new Date().toISOString();
           save();
+          syncSiteSave(s);
           refreshSiteFilter();
         } else if (!v) {
           nameEl.textContent = s.name; // reject empty
@@ -1720,6 +1999,7 @@
           s.notes = v;
           s.updated_at = new Date().toISOString();
           save();
+          syncSiteSave(s);
         }
       });
 
@@ -1787,6 +2067,7 @@
           if (!pin) return;
           pin.site_id = pickedSiteId;
           save();
+          syncPinUpdate(pin);
           renderUnsortedList();
           refreshPinVisibilityForFilter();
         });
@@ -1834,6 +2115,7 @@
       const idx = state.sites.findIndex(s => s.id === siteId);
       if (idx === -1) return;
       state.sites.splice(idx, 1);
+      syncSiteDelete(siteId);   // soft delete in the cloud (deleted_at)
       removeSitePolygon(siteId);
       /* Pins inside that site go to Unsorted unless another polygon contains them */
       for (const p of state.pins) {
@@ -1926,6 +2208,7 @@
         if (!s) return;
         s.polygon = points;
         s.updated_at = new Date().toISOString();
+        syncSiteSave(s);
         removeSitePolygon(s.id);
         renderSitePolygon(s);
         reevaluateAllPinSiteIds();
@@ -1956,6 +2239,9 @@
         updated_at: now
       };
       state.sites.push(site);
+      // Enqueue the site BEFORE reevaluating pins: pin updates that reference
+      // this new site must flush after the site row exists (FK ordering).
+      syncSiteSave(site, 'create');
       renderSitePolygon(site);
       reevaluateAllPinSiteIds();
       save();
@@ -2077,6 +2363,7 @@
       const s = state.sites.find(x => x.id === editMode.siteId);
       if (!s) { endEditMode(); return; }
       s.updated_at = new Date().toISOString();
+      syncSiteSave(s);
       const siteId = s.id;
       endEditMode();
       reevaluateAllPinSiteIds();
@@ -2304,6 +2591,11 @@
     var out = document.getElementById('ksauth-signout');
     if (!out) return;
     async function doSignOut(){
+      // Best-effort: push anything still queued while the session is valid,
+      // then drop the queue — leftover items must not flush under a future
+      // (possibly different) account. Local state itself is untouched.
+      try { if (typeof flushSyncQueue === 'function') await flushSyncQueue(); } catch (e) {}
+      try { if (typeof clearSyncQueue === 'function') clearSyncQueue(); } catch (e) {}
       try { await sb.auth.signOut(); } catch (e) {}
       location.reload();
     }
