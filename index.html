@@ -1968,8 +1968,25 @@
         const existing = pinByKey.get(key);
         if (existing) {
           report.pins.matched++;
-          if (existing.created_by == null && p.created_by) {
-            actions.push({ entity: 'pin', id: existing.id, action: 'patch', payload: { created_by: p.created_by } });
+          const patch = {};
+          if (existing.created_by == null && p.created_by) patch.created_by = p.created_by;
+          // site_id backfill, mirroring created_by: a NULL site_id on the
+          // cloud row is usually NOT a user choice — it's the 4c write path
+          // having dropped a legacy (non-UUID) site reference it couldn't
+          // translate (cloudSafeSiteId). If this import can resolve that
+          // reference to a real cloud site, restore the association.
+          // A non-null cloud site_id is never touched — that IS a real
+          // association, possibly edited after the export was taken.
+          let matchedSiteId = existing.site_id;
+          if (existing.site_id == null) {
+            const resolved = resolveSiteId(p.site_id);
+            if (typeof resolved === 'string') {
+              patch.site_id = resolved;
+              matchedSiteId = resolved;
+            }
+          }
+          if (Object.keys(patch).length) {
+            actions.push({ entity: 'pin', id: existing.id, action: 'patch', payload: patch });
             report.pins.backfilled++;
           }
           mappedPins.push({
@@ -1979,7 +1996,7 @@
             accuracy: existing.accuracy_meters,
             timestamp: canonTs(existing.created_at),
             note: existing.note,
-            site_id: existing.site_id,
+            site_id: matchedSiteId,
             hunt_id: existing.hunt_id,
             created_by: existing.created_by || p.created_by || null
           });
@@ -2027,7 +2044,19 @@
       state.pins = mapped.pins.concat(state.pins.filter(p => !pinKeys.has(pinNaturalKey(p))));
       const huntIds = new Set(mapped.hunts.map(h => h.id));
       state.hunts = mapped.hunts.concat(state.hunts.filter(h => !huntIds.has(h.id)));
-      if (mapped.track) state.track = mapped.track;
+      // Merge, never replace: mapped.track is cloud ∪ payload and knows
+      // nothing about points that exist only in THIS device's localStorage
+      // (pre-cloud legacy data that has no sync path of its own). A file
+      // import must not truncate them; they stay local until a "this
+      // device" import uploads them.
+      if (mapped.track) {
+        const byKey = new Map(state.track.map(pt => [trackPtKey(pt), pt]));
+        for (const pt of mapped.track) {
+          const k = trackPtKey(pt);
+          if (!byKey.has(k)) byKey.set(k, pt);
+        }
+        state.track = Array.from(byKey.values()).sort((a, b) => String(a.t).localeCompare(String(b.t)));
+      }
       // Surviving local records may still point at a remapped site id.
       for (const p of state.pins) {
         if (p.site_id != null && mapped.siteIdMap.has(p.site_id)) p.site_id = mapped.siteIdMap.get(p.site_id);
@@ -2036,9 +2065,7 @@
         if (h.site_id != null && mapped.siteIdMap.has(h.site_id)) h.site_id = mapped.siteIdMap.get(h.site_id);
       }
       save();
-      sitePolygonLayers.forEach(l => map.removeLayer(l));
-      sitePolygonLayers.clear();
-      state.sites.forEach(renderSitePolygon);
+      refreshSitePolygons();
       renderAllPins();
       redrawTrack();
       redrawHunts();
@@ -2190,8 +2217,20 @@
        for anyone whose pre-cloud data lives only in this browser's
        localStorage (Burke's phone); "a file" takes any KnapScout
        export, v1 through v4. */
+    /* The card-swapping modals (this one and pickSiteModal) replace the
+       shared confirm-modal card's innerHTML and restore it on close. If a
+       second invocation sneaks in before the first resolves — a keyboard
+       user double-tapping Space/Enter on the still-focused button reaches
+       the handler even though the overlay swallows touches — its "old
+       HTML" snapshot captures the FIRST modal's markup, and the eventual
+       restore destroys the confirm-modal template for the whole session.
+       One shared in-flight guard closes that for both. */
+    let modalCardInUse = false;
+
     function importSourceModal() {
       return new Promise(resolve => {
+        if (modalCardInUse) { resolve(null); return; }
+        modalCardInUse = true;
         const modal = document.getElementById('confirm-modal');
         const card = modal.querySelector('.modal-card');
         const oldHtml = card.innerHTML;
@@ -2209,6 +2248,7 @@
         function cleanup(val) {
           card.innerHTML = oldHtml;
           modal.hidden = true;
+          modalCardInUse = false;
           resolve(val);
         }
         document.getElementById('import-src-device').addEventListener('click', () => cleanup('device'));
@@ -2542,6 +2582,10 @@
           resolve(null);
           return;
         }
+        // Same shared in-flight guard as importSourceModal — this modal
+        // swaps the same card and has the same double-entry hazard.
+        if (modalCardInUse) { resolve(null); return; }
+        modalCardInUse = true;
         const modal = document.getElementById('confirm-modal');
         const card = modal.querySelector('.modal-card');
         const oldHtml = card.innerHTML;
@@ -2560,6 +2604,7 @@
         function cleanup(val) {
           card.innerHTML = oldHtml;
           modal.hidden = true;
+          modalCardInUse = false;
           resolve(val);
         }
         card.querySelectorAll('[data-site-id]').forEach(b => {
